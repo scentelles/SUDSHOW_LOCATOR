@@ -1,0 +1,93 @@
+{
+    "_comment": "SudShow Locator — Configuration PC",
+    "_units": "Toutes les distances en mètres, angles en degrés",
+
+    "stage": {
+        "width": 10.0,
+        "depth": 5.0
+    },
+
+    "anchors": {
+        "a0": { "x": 0.0, "y": 0.0 },
+        "a1": { "x": 10.0, "y": 0.0 },
+        "a2": { "x": 5.0, "y": 5.0 }
+    },
+
+    "fixtures": [
+        {
+            "id": 1,
+            "name": "Lyre 1",
+            "x": 4.25,
+            "y": 2.5,
+            "height": 4.0,
+            "gma_fixture_id": 1,
+            "pan_range_deg": 540,
+            "tilt_range_deg": 270,
+            "pan_offset_deg": 0,
+            "tilt_offset_deg": 0,
+            "pan_invert": false,
+            "tilt_invert": false,
+            "enabled": true
+        },
+        {
+            "id": 2,
+            "name": "Lyre 2",
+            "x": 4.55,
+            "y": 2.5,
+            "height": 4.0,
+            "gma_fixture_id": 2,
+            "pan_range_deg": 540,
+            "tilt_range_deg": 270,
+            "pan_offset_deg": 0,
+            "tilt_offset_deg": 0,
+            "pan_invert": false,
+            "tilt_invert": false,
+            "enabled": true
+        },
+        {
+            "id": 3,
+            "name": "Lyre 3",
+            "x": 4.85,
+            "y": 2.5,
+            "height": 4.0,
+            "gma_fixture_id": 3,
+            "pan_range_deg": 540,
+            "tilt_range_deg": 270,
+            "pan_offset_deg": 0,
+            "tilt_offset_deg": 0,
+            "pan_invert": false,
+            "tilt_invert": false,
+            "enabled": true
+        },
+        {
+            "id": 4,
+            "name": "Lyre 4",
+            "x": 5.15,
+            "y": 2.5,
+            "height": 4.0,
+            "gma_fixture_id": 4,
+            "pan_range_deg": 540,
+            "tilt_range_deg": 270,
+            "pan_offset_deg": 0,
+            "tilt_offset_deg": 0,
+            "pan_invert": false,
+            "tilt_invert": false,
+            "enabled": true
+        }
+    ],
+
+    "network": {
+        "udp_listen_port": 9000,
+        "gma2_host": "127.0.0.1",
+        "gma2_port": 30000,
+        "gma2_user": "administrator",
+        "gma2_password": "admin"
+    },
+
+    "tracking": {
+        "update_rate_hz": 20,
+        "smoothing_factor": 0.3,
+        "dead_zone_deg": 0.5,
+        "target_height": 1.7
+    }
+}
