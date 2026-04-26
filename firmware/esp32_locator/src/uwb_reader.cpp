@@ -30,49 +30,10 @@ bool UWBReader::initModule() {
     if (!_serial) return false;
 
 #if DEBUG_ENABLED
-    Serial.println("[UWB] Initialisation du module BU-01...");
+    Serial.println("[UWB] Mode écoute passive haute vitesse activé");
 #endif
 
-    // Attendre que le module soit prêt
-    delay(500);
-
-    // Test de communication
-    sendCommand("AT");
-    delay(200);
-
-    // Lire la réponse
-    String response = "";
-    while (_serial->available()) {
-        response += (char)_serial->read();
-    }
-
-#if DEBUG_ENABLED
-    Serial.printf("[UWB] Réponse AT: '%s'\n", response.c_str());
-#endif
-
-    if (response.indexOf("OK") < 0 && response.length() == 0) {
-        Serial.println("[UWB] ⚠ Pas de réponse du module. Vérifiez le câblage.");
-        Serial.println("[UWB]   Continuation sans AT firmware - lecture passive.");
-        return false;
-    }
-
-    // Configurer comme Tag
-    sendCommand("AT+anchor_tag=0");
-    delay(200);
-
-    // Lire et ignorer la réponse
-    while (_serial->available()) _serial->read();
-
-    // Démarrer le ranging
-    sendCommand("AT+switchdis=1");
-    delay(200);
-
-    while (_serial->available()) _serial->read();
-
-#if DEBUG_ENABLED
-    Serial.println("[UWB] ✓ Module configuré en Tag, ranging démarré.");
-#endif
-
+    // Plus de commandes AT: on écoute juste le flux C++ personnalisé à haute vitesse
     return true;
 }
 

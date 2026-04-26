@@ -1,0 +1,424 @@
+NodeMCU-BU01Specification V 1.1
+Copyrigh t © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+1
+NodeMCU-BU01 SPECIFICATION
+Version V1.1
+Copyright ©2020
+
+NodeMCU-BU01Specification V 1.1
+Copyrigh t © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+2
+Disclaimer and Copyright Notice
+The information in this article, including URL addresses for reference, is subject to change
+without notice.
+This document is provided "as is" without warranty of any kind, including any warranty of
+merchantability, fitness for a particular purpose, or non-infringement, and any warranty of any
+proposal, specification, or sample mentioned elsewhere. No liability is assumed in this
+document, including any infringement of any patent rights arising out of the use of the
+information in this document. No license is granted by estoppel or otherwise in this document,
+either express or implied.
+The test data obtained in this article are all obtained from the testing performed by Anxinke
+Labs. Actual results may vary slightly.
+The Wi-Fi Alliance member logo is owned by the Wi-Fi Alliance.
+All trademark names, trademarks and registered trademarks mentioned in this article are the
+property of their respective owners and are hereby declared.
+The final interpretation right belongs to Shenzhen Anxinke Technology Co., Ltd.
+Attention
+The contents of this manual may be changed due to product version upgrades or other reasons.
+Shenzhen Anxinke Technology Co., Ltd. reserves the right to modify the contents of this
+manual without any notice or prompt. This manual is only used as a guide. Shenzhen Anxin Ke
+Technology Co., Ltd. makes every effort to provide accurate information in this manual, but
+Shenzhen An Xin Ke Technology Co., Ltd. does not ensure that the content of the manual is
+completely error-free. All statements and information in this manual And recommendations do
+not constitute any express or implied warranty.
+
+NodeMCU-BU01Specification V 1.1
+Copyrigh t © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+3
+Documentation/revision/ revocation resume
+Version
+Date
+Development/revision
+Developme
+nt
+Approval
+V1.0
+2020.05.20
+Initial development
+Xie Yiji
+V1.1
+2022.12.12
+Update the schematic description
+Fangke
+Xuhong
+
+NodeMCU-BU01Specification V 1.1
+Copyrigh t © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+4
+Content
+1.Product Overview......................................................................................................................................... 5
+2.Electrical parameters............................................................................................................................... 7
+3.Appearance dimensions............................................................................................................................... 8
+4.Definition of pins..................................................................................................................................... 9
+5.Schematic diagrams................................................................................................................................... 12
+6.Design guidance......................................................................................................................................... 12
+7.ROLLING OF Reflow soldering.................................................................................................................14
+8.Packaging information.............................................................................................................................15
+9.Contact us................................................................................................................................................... 15
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+5
+1.Product Overview
+NodeMCU-BU01 is designed as a development board for the BU01 module, equipped
+with STM32F103C8T6MCU, peripherals to add temperature and humidity sensors and
+three-dimensional acceleration sensor, for customers to develop debugging to
+provide convenience.BU01 is an ultra-wideband (UWB) transceiver module based on
+Decawave DW1000 design. BU01 integrated the antenna, RF circuit, power management
+and clock circuits. BU01 can be used in bidirectional ranging or TDOA positioning
+systems, Positioning accuracy up to 10cm, and supports data rates up to 6.8Mbps.
+Characteristics
+
+Easy integration without RF design
+
+Extension of communications using RTLS infrastructure
+
+Support high label density
+
+Compliance with IEEE 802.15.4-2011UWB standards
+
+Support 4 channels
+3.5GHz to 6.5GHz
+
+Programmable transmit power
+
+3.3 V /5V power supply
+
+Power consumption <1mA in sleep mode
+
+Support for bidirectional ranging and TDOA
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+6
+
+Support SPI interface
+
+Data rate 100 kbps,850kbps,6.8Mbps
+Main parameters
+Table 1 Key parameter descriptions
+Model Name
+NodeMCU-BU01
+Dimensions
+35*55.5(±0.2)(W*H) mm
+Package
+DIP-40
+Antenna
+PCB
+antenna
+Frequency range
+3.5GHz to 6.5GHz
+Interface
+The all IO of PWM/I2C/GPIO 、MCU
+Operating
+temperature
+-40℃~85℃
+Storage
+environment
+-40 ℃~ 125 ℃, < 90%RH
+Power
+supply
+range
+5V or 3.3V
+Power
+consumption
+Development board :160 mA (with MCU, sensors)
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+7
+2.Electrical parameters
+Electrical characteristics
+Absolute maximum rating
+Any more than the following absolute maximum ratings can cause chip damage
+Name of name
+Minimum value
+Typical values
+Maximum value
+Units
+Micro USB supply
+voltage
+-
+5
+-
+V
+Pin header 3.3 V supply
+voltage
+-
+3.3
+-
+V
+Operating temperature
+-40
+-
++85
+℃
+Storage temperature
+-40
+-
++125
+℃
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+8
+3.Appearance dimensions
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+9
+4.Definition of pins
+NodeMCU-BU01 module has a total of 50 interfaces, such as the pin diagram, the
+pin function definition table is the interface definition.
+NodeMCU-BU01 Foot Schemes
+Foot function definition table
+Pin No.
+Item
+Functional Description
+1
+IO7
+default value is used as SYNC input. this pin can be
+reconfigured as a universal I /O pin GPIO7 under
+software control.
+2
+IO6
+universal I /O pin. when powered on, it is used as the
+SPIPHA (SPI phase selection) pin for configuring the
+SPI mode of operation. After power on, this pin will
+default to universal I /O pin.
+3
+IO 5
+universal I /O pin. when powered on, it is used as a
+SPIPOL (SPI polarity selection) pin for configuring SPI
+working mode. after power on, this pin will default to
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+10
+universal I /O pin.
+4
+IO4
+universal I /O pin.
+5
+IRQ
+The interrupt request output from the DWM1000 to the
+host processor and is connected to the MCU PB0. by
+default, the IRQ is a high-level efficient output, but
+can be configured as low-level valid if required. to
+run correctly in SLEEP and DEEPSLEEP mode, it should
+be configured to run efficiently at high levels. this
+pin will float in hibernation and DEEPSLEEP states and
+may cause a pseudo interrupt unless it is pulled low.
+This pin can be reconfigured as a generic I /O line
+GPIO8. when no IRQ function is used
+6
+CLK
+SPI clock and connected to MCU PA5
+7
+MISO
+SPI data output and connected to MCU PA6
+8
+MOSI
+SPI data input and connected to MCU PA7
+9
+CSN
+SPI chip select and connect with MCU PA4. this is a low
+level effective enable input. SPICSn jumps from high
+to low indicate the beginning of a new SPI transaction.
+SPICSn can also be used as a wake-up signal to get DW1000
+out of sleep or sleep state.
+10
+PA3
+PA3 on the MCU
+11
+PB1
+PB1 on the MCU
+12
+PB10
+PB10 on the MCU
+13
+PB11
+PB11 on the MCU
+14
+LED1
+PA2, connection LED1 on the MCU
+15
+LED2
+PA1, connection LED2 on the MCU
+16
+BTN
+PA0, connection BTN keys on the MCU
+17
+RESET
+Reset pin on MCU, connect reset button
+18
+GND
+Ground
+19
+GND
+Ground
+20
+V3.3
+3.3 V Power supply
+21
+V5
+5V power supply
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+11
+22
+V3.3
+3.3 V Power supply
+23
+GND
+Ground grounding
+24
+VBAT
+Vbat MCU battery power
+25
+SCL
+SCL pin on MCU, default pull up 3.3 V, internal connect
+sensor SCL pin
+26
+SDA
+SDA pin on MCU, default pull up 3.3 V, internal connect
+sensor SDA pin
+27
+PB8
+PB8 on the MCU
+28
+PB9
+PB9 on the MCU
+29
+PB5
+PB5 on the MCU
+30
+PB4
+PB4 on the MCU
+31
+PB3
+PB3 on the MCU
+32
+PA15
+PA15 on the MCU
+33
+V3.3
+3.3 V Power supply
+34
+RST
+Reset pin on BU01 and connected to MCU PB12
+35
+WAKEUP
+the wake-up pin on the BU01 and is connected to the PB13
+of the MCU. when set to a valid high level state, the
+WAKEUP pin brings the DW1000 into working mode from a
+dormant or DEEPSLEEP state. If not used, the pin can
+be grounded
+36
+EXTON
+The EXTON pin on the BU01 is connected to the MCU PB14
+and the external device is enabled. position and remain
+active during wake-up until the device enters sleep
+mode. can be used to control external DC-DC converters
+or other circuits not required when the device is in
+sleep mode to minimize power consumption
+37
+U1RX
+UART1-RX on the MCU
+38
+U1TX
+UART1-TX on the MCU
+39
+PA8
+PA8 on the MCU
+40
+PB15
+PB15 on the MCU
+DIO
+Swdio
+SWDIO feet on MCU, default flash pin
+CLK
+Swclk
+SWDIO feet on MCU, default flash pin
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+12
+BT0
+BOOT0
+BOOT0 foot on MCU, control MCU start mode
+BT1
+BOOT1
+BOOT1 foot on MCU, control MCU start mode
+RESET keys
+RESET
+Reset button
+BTN/PA0 keys
+BTN/PA0
+Press button to pull up PA0 pin
+BOOT pin controls start-up mode:
+BOOT0
+BOOT1
+MODE
+0
+x
+FLASH
+1
+1
+SRAM
+1
+0
+ISP
+5.Schematic diagrams
+6.Design guidance
+1. Antenna layout requirements
+It is forbidden to place metal parts around the antenna, and to put away from
+high frequency devices.
+2、Power supply
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+13
+Programme I:
+Standard Micro USB interface power supply
+Programme II:
+Pin 3.3 V Power supply
+(1)、recommend 3.3 V voltage, peak over 500mA current
+(2)、recommend the use of LDO power supply; if used DC-DC the recommended ripple
+is controlled within 30mV.
+(3)、DC-DC power supply circuit is suggested to reserve the position of dynamic
+response capacitance, which can optimize the output ripple when the load changes
+greatly.
+(4),3.3 V The proposed addition of ESD devices.
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+14
+7.ROLLING OF Reflow soldering
+
+NodeMCU-BU01Specification V 1.1
+C opyright © Shenzhen Ai-Thinker Technology Co.,Ltd All Rights Reserved 2020
+15
+8.Packaging information
+as shown below, the NodeMCU-BU01 packing is electrostatic bag packing.
+9.Contact us
+Official website: https://www.ai-thinker.com
+Development DOCS：https://docs.ai-thinker.com
+Official Forum: http://bbs.ai-thinker.com
+Sample purchase: https://anxinke.taobao.com
+Business cooperation: sales@aithinker.com
+Technical support: support@aithinker.com
+Company Address: Room410, Building C, Huafeng Intelligence Innovation Port,
+Gushu, Xixiang, Baoan District, Shenzhen China 518000
+Tel :0755-29162996

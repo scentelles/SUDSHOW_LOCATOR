@@ -1,0 +1,97 @@
+#include <SPI.h>
+#include <DW1000Ranging.h>
+#include "pinout.h"
+
+// =========================================================================
+// CONFIGURATION DU NOEUD
+// =========================================================================
+// Modifie cette valeur avant de compiler et de flasher chaque module :
+// 0 = TAG (Celui branché sur l'ESP32)
+// 1 = ANCHOR 0 (Fond de scène gauche)
+// 2 = ANCHOR 1 (Fond de scène droit)
+// 3 = ANCHOR 2 (Avant-scène)
+#define NODE_MODE 0
+// =========================================================================
+
+// Stockage des distances pour le TAG
+float distances[3] = {0.0, 0.0, 0.0};
+uint32_t lastPrintMs = 0;
+
+void newRange();
+void newDevice(DW1000Device* device);
+void inactiveDevice(DW1000Device* device);
+
+void setup() {
+    Serial1.begin(115200);
+    delay(1000);
+
+    initHardwarePins();
+
+    // Initialisation SPI (les pins SCK/MISO/MOSI sont gérés par le framework)
+    SPI.begin();
+    
+    // Initialisation DW1000 — signature: initCommunication(RST, SS, IRQ)
+    DW1000Ranging.initCommunication(PIN_RST, PIN_SPI_SS, PIN_IRQ);
+    
+    // Callbacks
+    DW1000Ranging.attachNewRange(newRange);
+    DW1000Ranging.attachNewDevice(newDevice);
+    DW1000Ranging.attachInactiveDevice(inactiveDevice);
+
+    if (NODE_MODE == 0) {
+        Serial1.println("[NODE] Démarrage en mode: TAG");
+        // MAC adresse arbitraire pour le tag
+        DW1000Ranging.startAsTag("7D:00:22:EA:82:60:3B:9C", DW1000.MODE_SHORTDATA_FAST_ACCURACY);
+    } else {
+        char mac_addr[24];
+        // Adresses MAC spécifiques pour les anchors (01 pour A0, 02 pour A1, 03 pour A2)
+        sprintf(mac_addr, "01:00:5B:D5:A9:9A:E2:%02X", NODE_MODE);
+        Serial1.printf("[NODE] Démarrage en mode: ANCHOR %d (MAC: %s)\n", NODE_MODE - 1, mac_addr);
+        DW1000Ranging.startAsAnchor(mac_addr, DW1000.MODE_SHORTDATA_FAST_ACCURACY);
+    }
+}
+
+void loop() {
+    // Gestion interne du protocole TWR
+    DW1000Ranging.loop();
+
+    // Le TAG envoie périodiquement les distances via le port série (tx) vers l'ESP32 à 30Hz
+    if (NODE_MODE == 0) {
+        uint32_t now = millis();
+        if (now - lastPrintMs >= 33) { // ~30 Hz
+            lastPrintMs = now;
+            // Ne pas envoyer des distances nulles (anchor pas encore vue)
+            if (distances[0] > 0.01 || distances[1] > 0.01 || distances[2] > 0.01) {
+                // Format compatible avec parseDistFormat() de l'ESP32
+                Serial1.printf("DIST:0=%.3f,1=%.3f,2=%.3f\n", distances[0], distances[1], distances[2]);
+            }
+        }
+    }
+}
+
+void newRange() {
+    if (NODE_MODE == 0) {
+        // En mode TAG, dès qu'une distance est reçue d'un anchor, on la stocke.
+        // On reconnait l'anchor grâce au dernier octet de son adresse (1, 2 ou 3)
+        uint16_t shortAddr = DW1000Ranging.getDistantDevice()->getShortAddress();
+        float dist = DW1000Ranging.getDistantDevice()->getRange();
+        
+        uint8_t lastByte = shortAddr & 0xFF;
+        
+        if (lastByte == 1) distances[0] = dist;       // A0
+        else if (lastByte == 2) distances[1] = dist;  // A1
+        else if (lastByte == 3) distances[2] = dist;  // A2
+    }
+}
+
+void newDevice(DW1000Device* device) {
+#if 0
+    Serial1.printf("[NODE] Appareil connecté: %X\n", device->getShortAddress());
+#endif
+}
+
+void inactiveDevice(DW1000Device* device) {
+#if 0
+    Serial1.printf("[NODE] Appareil déconnecté: %X\n", device->getShortAddress());
+#endif
+}

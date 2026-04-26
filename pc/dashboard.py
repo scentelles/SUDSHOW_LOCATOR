@@ -89,6 +89,12 @@ class Dashboard:
         self.display_x = 0.0
         self.display_y = 0.0
 
+        # --- Velocity prediction (dead-reckoning between UWB packets) ---
+        self._pos_history = collections.deque(maxlen=5)  # (x, y, t)
+        self._vel_x = 0.0   # m/s estimated
+        self._vel_y = 0.0
+        self._last_predict_t = time.time()
+
         # Drag state
         self._drag_type = None   # "anchor" / "fixture"
         self._drag_idx = -1
@@ -115,6 +121,36 @@ class Dashboard:
                 return json.load(f)
         except Exception:
             return {}
+
+    def _save_config(self):
+        """Sauvegarde la config courante (scène, anchors, fixtures) dans config.json."""
+        # Charger le fichier existant pour préserver les champs non gérés
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+
+        # Mettre à jour les champs gérés par le dashboard
+        data["stage"] = {"width": self.stage_w, "depth": self.stage_d}
+        data["anchors"] = {
+            f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2)}
+            for i, a in enumerate(self.anchors)
+        }
+        # Mettre à jour les positions des fixtures (conserver les autres champs)
+        existing_fixtures = data.get("fixtures", [])
+        for i, fx in enumerate(self.fixtures):
+            if i < len(existing_fixtures):
+                existing_fixtures[i]["x"] = round(fx["x"], 2)
+                existing_fixtures[i]["y"] = round(fx["y"], 2)
+        data["fixtures"] = existing_fixtures
+
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+            self._log("[CFG] ✓ Configuration sauvegardée")
+        except Exception as e:
+            self._log(f"[CFG] ✗ Erreur sauvegarde: {e}")
 
     def _default_fixtures(self):
         """6 lyres centrées en fond de scène, réparties sur 60% de la largeur."""
@@ -180,6 +216,12 @@ class Dashboard:
                                activebackground=C["accent"], activeforeground="#000",
                                command=self._apply_stage_size)
         btn_apply.pack(side="left", padx=6)
+
+        btn_save = tk.Button(top, text="💾 Sauvegarder", font=self.ft_label,
+                              bg=C["border"], fg=C["ok"], bd=0, padx=10,
+                              activebackground=C["ok"], activeforeground="#000",
+                              command=self._save_config)
+        btn_save.pack(side="right", padx=8)
 
         # --- Main: left canvas + right panel ---
         main = tk.PanedWindow(self.root, orient="horizontal",
@@ -273,6 +315,12 @@ class Dashboard:
         self.lbl_pkt = tk.Label(parent, text="Paquets: 0", font=self.ft_small,
                                  bg=C["panel"], fg=C["dim"])
         self.lbl_pkt.pack(anchor="w", padx=8)
+        self.lbl_vel = tk.Label(parent, text="Vitesse: —", font=self.ft_small,
+                                 bg=C["panel"], fg=C["dim"])
+        self.lbl_vel.pack(anchor="w", padx=8)
+        self.lbl_predict = tk.Label(parent, text="", font=self.ft_small,
+                                     bg=C["panel"], fg=C["dim"])
+        self.lbl_predict.pack(anchor="w", padx=8)
 
         # Hint
         tk.Label(parent, text="💡 Glissez les anchors (cercles\nbleus) et les lyres (carrés jaunes)\npour ajuster les positions.",
@@ -402,9 +450,9 @@ class Dashboard:
                                    text=f"{self.distances[i]:.2f}m",
                                    fill=C["dim"], font=("Consolas", 7))
 
-        # Trail
+        # Trail (snapshot to avoid mutation from UDP thread)
         now = time.time()
-        for trx, try_, tt in self.trail:
+        for trx, try_, tt in list(self.trail):
             age = now - tt
             if age > 5:
                 continue
@@ -530,6 +578,7 @@ class Dashboard:
                        if self._drag_type == "anchor"
                        else f"[UI] Déplacé {self.fixtures[self._drag_idx]['name']} → "
                             f"({self.fixtures[self._drag_idx]['x']:.1f}, {self.fixtures[self._drag_idx]['y']:.1f})")
+            self._save_config()
 
     # =========================================================================
     # STAGE SIZE
@@ -539,12 +588,20 @@ class Dashboard:
             new_w = float(self.entry_w.get())
             new_d = float(self.entry_d.get())
             if 1.0 <= new_w <= 100.0 and 1.0 <= new_d <= 100.0:
+                old_w = self.stage_w
+                old_d = self.stage_d
+                # Proportionally rescale anchors
+                for a in self.anchors:
+                    a[0] = a[0] * new_w / old_w
+                    a[1] = a[1] * new_d / old_d
+                # Proportionally rescale fixtures
+                for fx in self.fixtures:
+                    fx["x"] = fx["x"] * new_w / old_w
+                    fx["y"] = fx["y"] * new_d / old_d
                 self.stage_w = new_w
                 self.stage_d = new_d
-                # Recalculate default fixture positions
-                self.fixtures = self._default_fixtures()
-                self._rebuild_fixture_labels()
-                self._log(f"[UI] Scène: {new_w}m × {new_d}m")
+                self._log(f"[UI] Scène: {new_w}m × {new_d}m (anchors/fixtures recadrés)")
+                self._save_config()
                 self._draw()
         except ValueError:
             pass
@@ -556,6 +613,65 @@ class Dashboard:
         # Find the fixtures section parent — they're in the right panel
         # This is a simplified rebuild; in production we'd store the parent reference
         # For now, labels will stay stale until restart
+
+    # =========================================================================
+    # TRILATERATION (PC-side, weighted least-squares)
+    # =========================================================================
+    def _trilaterate(self, distances):
+        """
+        Trilatération 2D pondérée.
+        1) Solution initiale par linéarisation (Cramer)
+        2) Raffinement par gradient descent pondéré (1/d²)
+           → les anchors proches (plus précises) ont plus de poids.
+        Retourne (x, y) ou None si impossible.
+        """
+        if len(distances) < 3 or len(self.anchors) < 3:
+            return None
+
+        d0, d1, d2 = distances[0], distances[1], distances[2]
+        x1, y1 = self.anchors[0]
+        x2, y2 = self.anchors[1]
+        x3, y3 = self.anchors[2]
+
+        # --- Étape 1 : Solution initiale par Cramer ---
+        a1 = 2.0 * (x2 - x1)
+        b1 = 2.0 * (y2 - y1)
+        c1 = d0**2 - d1**2 - x1**2 + x2**2 - y1**2 + y2**2
+
+        a2 = 2.0 * (x3 - x1)
+        b2 = 2.0 * (y3 - y1)
+        c2 = d0**2 - d2**2 - x1**2 + x3**2 - y1**2 + y3**2
+
+        det = a1 * b2 - a2 * b1
+        if abs(det) < 1e-6:
+            return None  # Anchors colinéaires
+
+        x = (c1 * b2 - c2 * b1) / det
+        y = (a1 * c2 - a2 * c1) / det
+
+        # --- Étape 2 : Raffinement pondéré (gradient descent) ---
+        # Poids = 1/(d+0.05)² normalisés → la distance la plus courte domine
+        dists = [d0, d1, d2]
+        anchors = [(x1, y1), (x2, y2), (x3, y3)]
+        weights = [1.0 / (d + 0.05) ** 2 for d in dists]
+        wsum = sum(weights)
+        weights = [w / wsum for w in weights]  # Normaliser
+
+        for _ in range(50):
+            gx, gy = 0.0, 0.0
+            for i, (ax, ay) in enumerate(anchors):
+                dx = x - ax
+                dy = y - ay
+                computed_d = math.sqrt(dx * dx + dy * dy)
+                if computed_d < 0.001:
+                    continue
+                error = computed_d - dists[i]
+                gx += weights[i] * error * dx / computed_d
+                gy += weights[i] * error * dy / computed_d
+            x -= 0.5 * gx
+            y -= 0.5 * gy
+
+        return (x, y)
 
     # =========================================================================
     # LOG
@@ -598,20 +714,64 @@ class Dashboard:
             try:
                 data, addr = sock.recvfrom(1024)
                 msg = json.loads(data.decode("utf-8"))
-                self.tag_x = msg.get("x", 0.0)
-                self.tag_y = msg.get("y", 0.0)
+                now = time.time()
                 self.tag_q = msg.get("q", 0.0)
                 self.distances = msg.get("d", [0, 0, 0])
                 self.pkt_count += 1
-                self.last_pkt = time.time()
+                self.last_pkt = now
                 self.connected = True
                 self._rate_n += 1
-                self.trail.append((self.tag_x, self.tag_y, time.time()))
+
+                # --- PC-side trilateration using dashboard anchor positions ---
+                if len(self.distances) >= 3:
+                    pos = self._trilaterate(self.distances)
+                    if pos is not None:
+                        new_x, new_y = pos
+                        
+                        # Recalculate quality PC-side based on actual UI anchors
+                        err = 0.0
+                        for i in range(3):
+                            ax, ay = self.anchors[i]
+                            cd = math.sqrt((new_x - ax)**2 + (new_y - ay)**2)
+                            err += abs(cd - self.distances[i])
+                        err /= 3.0
+                        # 0m error = 100%, 1m+ error = 0%
+                        self.tag_q = max(0.0, min(1.0, 1.0 - err))
+                    else:
+                        # Fallback to ESP32-computed position
+                        new_x = msg.get("x", 0.0)
+                        new_y = msg.get("y", 0.0)
+                else:
+                    new_x = msg.get("x", 0.0)
+                    new_y = msg.get("y", 0.0)
+
+                self.tag_x = new_x
+                self.tag_y = new_y
+                self.trail.append((new_x, new_y, now))
+
+                # --- Velocity estimation ---
+                self._pos_history.append((new_x, new_y, now))
+                if len(self._pos_history) >= 2:
+                    oldest = self._pos_history[0]
+                    dt = now - oldest[2]
+                    if dt > 0.05:  # Avoid division by tiny dt
+                        self._vel_x = (new_x - oldest[0]) / dt
+                        self._vel_y = (new_y - oldest[1]) / dt
+                        # Clamp velocity to reasonable range (max 3 m/s walk/run)
+                        max_v = 3.0
+                        self._vel_x = max(-max_v, min(max_v, self._vel_x))
+                        self._vel_y = max(-max_v, min(max_v, self._vel_y))
+
+                # Snap display to real position on new packet
+                self.display_x = new_x
+                self.display_y = new_y
+                self._last_predict_t = now
 
                 # Log every 5th packet (lisible sans saturer)
                 if self.pkt_count % 5 == 1:
                     d_str = " ".join(f"A{i}={v:.2f}m" for i, v in enumerate(self.distances))
-                    self._log(f"[ESP] x={self.tag_x:.3f} y={self.tag_y:.3f}  {d_str}")
+                    vel = math.sqrt(self._vel_x**2 + self._vel_y**2)
+                    self._log(f"[TRI] x={new_x:.3f} y={new_y:.3f}  {d_str}  v={vel:.2f}m/s")
 
             except socket.timeout:
                 if time.time() - self.last_pkt > 3:
@@ -625,11 +785,11 @@ class Dashboard:
     # TICK
     # =========================================================================
     def _tick(self):
-        # Smooth display
+        # Direct display: tag_x/y is set by the UDP thread (trilaterated)
+        # display_x/y just tracks it directly for instant response
         if self.connected:
-            a = 0.4
-            self.display_x = a * self.tag_x + (1 - a) * self.display_x
-            self.display_y = a * self.tag_y + (1 - a) * self.display_y
+            self.display_x = self.tag_x
+            self.display_y = self.tag_y
 
         # Draw
         self._draw()
@@ -671,6 +831,21 @@ class Dashboard:
             self._rate_t = now
         self.lbl_rate.config(text=f"{self.pkt_rate:.1f} pkt/s  |  #{self.pkt_count}")
         self.lbl_pkt.config(text=f"Paquets: {self.pkt_count}")
+
+        # Velocity & prediction status
+        if self.connected:
+            vel = math.sqrt(self._vel_x**2 + self._vel_y**2)
+            self.lbl_vel.config(text=f"Vitesse: {vel:.2f} m/s")
+            age = time.time() - self.last_pkt
+            if age < 0.5:
+                self.lbl_predict.config(text="🟢 Live UWB", fg=C["ok"])
+            elif age < 3.0:
+                self.lbl_predict.config(text=f"⏳ Dernier: {age:.1f}s", fg=C["warn"])
+            else:
+                self.lbl_predict.config(text=f"⚠ Signal perdu ({age:.0f}s)", fg=C["bad"])
+        else:
+            self.lbl_vel.config(text="Vitesse: —")
+            self.lbl_predict.config(text="")
 
         self.root.after(33, self._tick)
 

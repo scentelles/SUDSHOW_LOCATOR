@@ -1,24 +1,30 @@
 {
     "_comment": "SudShow Locator — Configuration PC",
     "_units": "Toutes les distances en mètres, angles en degrés",
-
     "stage": {
-        "width": 10.0,
-        "depth": 5.0
+        "width": 7.0,
+        "depth": 3.5
     },
-
     "anchors": {
-        "a0": { "x": 0.0, "y": 0.0 },
-        "a1": { "x": 10.0, "y": 0.0 },
-        "a2": { "x": 5.0, "y": 5.0 }
+        "a0": {
+            "x": 6.7,
+            "y": 0.2
+        },
+        "a1": {
+            "x": 0.3,
+            "y": 0.2
+        },
+        "a2": {
+            "x": 4.3,
+            "y": 3.2
+        }
     },
-
     "fixtures": [
         {
             "id": 1,
             "name": "Lyre 1",
-            "x": 4.25,
-            "y": 2.5,
+            "x": 2.5,
+            "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 1,
             "pan_range_deg": 540,
@@ -32,8 +38,8 @@
         {
             "id": 2,
             "name": "Lyre 2",
-            "x": 4.55,
-            "y": 2.5,
+            "x": 2.9,
+            "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 2,
             "pan_range_deg": 540,
@@ -47,8 +53,8 @@
         {
             "id": 3,
             "name": "Lyre 3",
-            "x": 4.85,
-            "y": 2.5,
+            "x": 3.3,
+            "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 3,
             "pan_range_deg": 540,
@@ -62,8 +68,8 @@
         {
             "id": 4,
             "name": "Lyre 4",
-            "x": 5.15,
-            "y": 2.5,
+            "x": 3.7,
+            "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 4,
             "pan_range_deg": 540,
@@ -75,7 +81,6 @@
             "enabled": true
         }
     ],
-
     "network": {
         "udp_listen_port": 9000,
         "gma2_host": "127.0.0.1",
@@ -83,7 +88,6 @@
         "gma2_user": "administrator",
         "gma2_password": "admin"
     },
-
     "tracking": {
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
