@@ -10,11 +10,25 @@
 #include "uwb_reader.h"
 #include "trilateration.h"
 #include "network.h"
+#include <Preferences.h>
 
 // --- Instances globales ---
 UWBReader      uwb;
 Trilateration  trilat;
 Network        net;
+Preferences    prefs;
+
+float current_alpha = FILTER_ALPHA;
+
+void onConfigReceived(float o0, float o1, float o2, float a) {
+    uwb.setOffsets(o0, o1, o2);
+    current_alpha = a;
+    prefs.putFloat("off0", o0);
+    prefs.putFloat("off1", o1);
+    prefs.putFloat("off2", o2);
+    prefs.putFloat("alpha", a);
+    Serial.printf("[CONFIG] Nouveaux params reçus: A0=%.2f A1=%.2f A2=%.2f Alpha=%.2f\n", o0, o1, o2, a);
+}
 
 // --- Timing ---
 uint32_t lastUpdateTime  = 0;
@@ -61,6 +75,15 @@ void setup() {
     // --- Initialiser la liaison UWB ---
     uwb.begin(Serial2, UWB_SERIAL_RX, UWB_SERIAL_TX, UWB_BAUD_RATE);
 
+    // --- Charger les offsets et params de calibration ---
+    prefs.begin("uwb", false);
+    float o0 = prefs.getFloat("off0", ANCHOR1_OFFSET);
+    float o1 = prefs.getFloat("off1", ANCHOR2_OFFSET);
+    float o2 = prefs.getFloat("off2", ANCHOR3_OFFSET);
+    current_alpha = prefs.getFloat("alpha", FILTER_ALPHA);
+    uwb.setOffsets(o0, o1, o2);
+    Serial.printf("[MAIN] Calibration chargée : A0=%.2f A1=%.2f A2=%.2f Alpha=%.2f\n", o0, o1, o2, current_alpha);
+
     // Tenter l'initialisation AT firmware
     bool atReady = uwb.initModule();
     if (!atReady) {
@@ -82,6 +105,9 @@ void loop() {
 
     // --- Maintenir la connexion WiFi ---
     net.maintainConnection();
+
+    // --- Écouter les nouvelles configurations de calibration ---
+    net.listenForConfig(5001, onConfigReceived);
 
     // --- Calcul et envoi à fréquence fixe ---
     uint32_t now = millis();
@@ -113,11 +139,15 @@ void loop() {
 
     if (!rawPos.valid) {
         invalidCount++;
-        return;
+        // On n'abandonne PLUS l'envoi UDP ! On force une position factice
+        // pour laisser le PC calculer la trilatération 3D.
+        rawPos.x = 0.0f;
+        rawPos.y = 0.0f;
+        rawPos.quality = 0.0f;
     }
 
     // --- Filtrage ---
-    Position2D pos = trilat.filter(rawPos, FILTER_ALPHA);
+    Position2D pos = trilat.filter(rawPos, current_alpha);
     positionCount++;
 
     // --- Envoi UDP ---

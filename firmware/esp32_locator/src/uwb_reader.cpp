@@ -13,6 +13,15 @@ UWBReader::UWBReader()
         _anchors[i].valid          = false;
         _anchors[i].updateCount    = 0;
     }
+    _offsets[0] = 0.0f;
+    _offsets[1] = 0.0f;
+    _offsets[2] = 0.0f;
+}
+
+void UWBReader::setOffsets(float o0, float o1, float o2) {
+    _offsets[0] = o0;
+    _offsets[1] = o1;
+    _offsets[2] = o2;
 }
 
 void UWBReader::begin(HardwareSerial& serial, int rxPin, int txPin, uint32_t baudRate) {
@@ -100,8 +109,12 @@ void UWBReader::parseLine(const char* line) {
         // Extraire les distances
         // Ce format est courant dans les firmwares Decawave/Qorvo
         parseDistFormat(line);
+    } else {
+        // Sinon, on ignore la ligne (peut être "OK", version info, etc.)
+#if DEBUG_ENABLED
+        Serial.printf("[UWB] ? Ligne ignorée ou format inconnu: '%s'\n", line);
+#endif
     }
-    // Sinon, on ignore la ligne (peut être "OK", version info, etc.)
 }
 
 void UWBReader::parseAiThinkerFormat(const char* line) {
@@ -114,8 +127,19 @@ void UWBReader::parseAiThinkerFormat(const char* line) {
         const char* colon = strchr(line + offset, ':');
         if (colon) {
             float distance = atof(colon + 1);
+#if DEBUG_ENABLED
+            Serial.printf("[UWB] [PARSE] AiThinker -> A%d = %.3fm\n", index, distance);
+#endif
             updateAnchor(index, distance);
+        } else {
+#if DEBUG_ENABLED
+            Serial.printf("[UWB] [PARSE ERR] Pas de ':' trouve dans: %s\n", line);
+#endif
         }
+    } else {
+#if DEBUG_ENABLED
+        Serial.printf("[UWB] [PARSE ERR] Index invalide dans: %s\n", line);
+#endif
     }
 }
 
@@ -155,6 +179,13 @@ void UWBReader::parseCompactFormat(const char* line) {
 
 void UWBReader::updateAnchor(uint8_t index, float distance) {
     if (index >= MAX_ANCHORS) return;
+
+    // --- Calibration (Compensation Antenna Delay dynamique) ---
+    distance -= _offsets[index];
+
+    // Empêcher les distances absurdes / négatives après calibration
+    if (distance < 0.0f) distance = 0.0f;
+
     if (!isValidDistance(distance)) {
 #if DEBUG_ENABLED
         Serial.printf("[UWB] ✗ Anchor %d distance invalide: %.3f m\n", index, distance);

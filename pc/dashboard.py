@@ -63,12 +63,12 @@ class Dashboard:
         self.stage_w = self.cfg.get("stage", {}).get("width", 10.0)
         self.stage_d = self.cfg.get("stage", {}).get("depth", 5.0)
 
-        # Anchors [(x,y), ...]
+        # Anchors [(x,y,z), ...]
         acfg = self.cfg.get("anchors", {})
         self.anchors = [
-            [acfg.get("a0", {}).get("x", 0.0),   acfg.get("a0", {}).get("y", 0.0)],
-            [acfg.get("a1", {}).get("x", 10.0),  acfg.get("a1", {}).get("y", 0.0)],
-            [acfg.get("a2", {}).get("x", 5.0),   acfg.get("a2", {}).get("y", 5.0)],
+            [acfg.get("a0", {}).get("x", 0.0),   acfg.get("a0", {}).get("y", 0.0),   acfg.get("a0", {}).get("z", 2.0)],
+            [acfg.get("a1", {}).get("x", 10.0),  acfg.get("a1", {}).get("y", 0.0),   acfg.get("a1", {}).get("z", 2.0)],
+            [acfg.get("a2", {}).get("x", 5.0),   acfg.get("a2", {}).get("y", 5.0),   acfg.get("a2", {}).get("z", 2.0)],
         ]
 
         # Fixtures — 6 lyres, centrées en fond de scène
@@ -88,6 +88,7 @@ class Dashboard:
         self.trail = collections.deque(maxlen=120)
         self.display_x = 0.0
         self.display_y = 0.0
+        self.esp32_ip = None
 
         # --- Velocity prediction (dead-reckoning between UWB packets) ---
         self._pos_history = collections.deque(maxlen=5)  # (x, y, t)
@@ -134,7 +135,7 @@ class Dashboard:
         # Mettre à jour les champs gérés par le dashboard
         data["stage"] = {"width": self.stage_w, "depth": self.stage_d}
         data["anchors"] = {
-            f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2)}
+            f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2), "z": round(a[2], 2)}
             for i, a in enumerate(self.anchors)
         }
         # Mettre à jour les positions des fixtures (conserver les autres champs)
@@ -144,6 +145,16 @@ class Dashboard:
                 existing_fixtures[i]["x"] = round(fx["x"], 2)
                 existing_fixtures[i]["y"] = round(fx["y"], 2)
         data["fixtures"] = existing_fixtures
+        
+        try:
+            th = float(self.ent_cible_z.get())
+        except:
+            th = 1.7
+            
+        data["tracking"] = self.cfg.get("tracking", {})
+        data["tracking"]["target_height"] = th
+        
+        data["calibration"] = self.cfg.get("calibration", {"a0": 0.8, "a1": 0.8, "a2": 0.8, "alpha": 0.85, "tag_z": 1.0})
 
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -310,6 +321,54 @@ class Dashboard:
             l.pack(side="left", padx=4)
             self.fx_labels.append(l)
 
+        fh = tk.Frame(parent, bg=C["panel"])
+        fh.pack(fill="x", padx=8, pady=(4, 0))
+        tk.Label(fh, text="Cible Z:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.ent_cible_z = tk.Entry(fh, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        th_val = self.cfg.get("tracking", {}).get("target_height", 1.7)
+        self.ent_cible_z.insert(0, str(th_val))
+        self.ent_cible_z.pack(side="left", padx=4)
+        tk.Label(fh, text="m (Visage à éclairer)", font=("Segoe UI", 7), bg=C["panel"], fg=C["dim"]).pack(side="left")
+
+        # Calibration
+        self._section(parent, "🔧 CALIBRATION UWB")
+        self.cal_entries = []
+        for i in range(3):
+            f = tk.Frame(parent, bg=C["panel"])
+            f.pack(fill="x", padx=8, pady=1)
+            tk.Label(f, text=f"A{i} Offset:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+            ent = tk.Entry(f, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+            off_val = self.cfg.get("calibration", {}).get(f"a{i}", 0.8)
+            ent.insert(0, str(off_val))
+            ent.pack(side="left", padx=4)
+            tk.Label(f, text="m  | Z:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+            ent_z = tk.Entry(f, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+            ent_z.insert(0, str(self.anchors[i][2]))
+            ent_z.pack(side="left", padx=4)
+            tk.Label(f, text="m", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+            self.cal_entries.append((ent, ent_z))
+            
+        f_alpha = tk.Frame(parent, bg=C["panel"])
+        f_alpha.pack(fill="x", padx=8, pady=(4, 0))
+        tk.Label(f_alpha, text="Lissage:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.ent_alpha = tk.Entry(f_alpha, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        alpha_val = self.cfg.get("calibration", {}).get("alpha", 0.85)
+        self.ent_alpha.insert(0, str(alpha_val))
+        self.ent_alpha.pack(side="left", padx=4)
+        tk.Label(f_alpha, text="(0.1=Lent)", font=("Segoe UI", 7), bg=C["panel"], fg=C["dim"]).pack(side="left")
+        
+        f_tag = tk.Frame(parent, bg=C["panel"])
+        f_tag.pack(fill="x", padx=8, pady=(2, 4))
+        tk.Label(f_tag, text="Tag Z:  ", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.ent_tag_z = tk.Entry(f_tag, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        tag_val = self.cfg.get("calibration", {}).get("tag_z", 1.0)
+        self.ent_tag_z.insert(0, str(tag_val))
+        self.ent_tag_z.pack(side="left", padx=4)
+        tk.Label(f_tag, text="m (Ceinture)", font=("Segoe UI", 7), bg=C["panel"], fg=C["dim"]).pack(side="left")
+            
+        btn_cal = tk.Button(parent, text="Appliquer Calibration", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, activebackground=C["accent"], activeforeground="#000", command=self._send_calibration)
+        btn_cal.pack(pady=8)
+
         # Info
         self._section(parent, "ℹ️  INFO")
         self.lbl_pkt = tk.Label(parent, text="Paquets: 0", font=self.ft_small,
@@ -439,7 +498,8 @@ class Dashboard:
         # Distance lines from anchors
         if self.connected:
             tx, ty, _ = self._stage2px(self.display_x, self.display_y)
-            for i, (ax, ay) in enumerate(self.anchors):
+            for i, a in enumerate(self.anchors):
+                ax, ay = a[:2]
                 apx, apy, _ = self._stage2px(ax, ay)
                 cv.create_line(apx, apy, tx, ty, fill=C["anchor_bg"],
                                width=1, dash=(3, 5))
@@ -477,8 +537,8 @@ class Dashboard:
                            text=f"({fx['x']:.1f},{fx['y']:.1f})",
                            fill=C["dim"], font=("Consolas", 7))
 
-        # Anchors (circles)
-        for i, (ax, ay) in enumerate(self.anchors):
+        for i, a in enumerate(self.anchors):
+            ax, ay = a[:2]
             apx, apy, _ = self._stage2px(ax, ay)
             # Outer ring
             r1 = 18
@@ -527,7 +587,8 @@ class Dashboard:
         best_type = None
         best_idx = -1
 
-        for i, (ax, ay) in enumerate(self.anchors):
+        for i, a in enumerate(self.anchors):
+            ax, ay = a[:2]
             px, py, _ = self._stage2px(ax, ay)
             d = math.hypot(event.x - px, event.y - py)
             if d < 25 and d < best_dist:
@@ -562,7 +623,8 @@ class Dashboard:
         sy = max(-1, min(self.stage_d + 1, sy))
 
         if self._drag_type == "anchor":
-            self.anchors[self._drag_idx] = [sx, sy]
+            self.anchors[self._drag_idx][0] = sx
+            self.anchors[self._drag_idx][1] = sy
         elif self._drag_type == "fixture":
             self.fixtures[self._drag_idx]["x"] = sx
             self.fixtures[self._drag_idx]["y"] = sy
@@ -614,6 +676,42 @@ class Dashboard:
         # This is a simplified rebuild; in production we'd store the parent reference
         # For now, labels will stay stale until restart
 
+    def _send_calibration(self):
+        try:
+            o0 = float(self.cal_entries[0][0].get())
+            o1 = float(self.cal_entries[1][0].get())
+            o2 = float(self.cal_entries[2][0].get())
+            z0 = float(self.cal_entries[0][1].get())
+            z1 = float(self.cal_entries[1][1].get())
+            z2 = float(self.cal_entries[2][1].get())
+            a  = float(self.ent_alpha.get())
+            tz = float(self.ent_tag_z.get())
+            
+            self.anchors[0][2] = z0
+            self.anchors[1][2] = z1
+            self.anchors[2][2] = z2
+            
+            # Save to cfg
+            if "calibration" not in self.cfg:
+                self.cfg["calibration"] = {}
+            self.cfg["calibration"]["a0"] = o0
+            self.cfg["calibration"]["a1"] = o1
+            self.cfg["calibration"]["a2"] = o2
+            self.cfg["calibration"]["alpha"] = a
+            self.cfg["calibration"]["tag_z"] = tz
+            self._save_config()
+            
+            # Send UDP
+            if self.esp32_ip:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                msg = json.dumps({"off0": o0, "off1": o1, "off2": o2, "alpha": a})
+                sock.sendto(msg.encode("utf-8"), (self.esp32_ip, 5001))
+                self._log(f"[CFG] Calibration envoyée à {self.esp32_ip}:5001")
+            else:
+                self._log("[CFG] ⚠ Attente du premier paquet ESP32 pour connaître son IP...")
+        except ValueError:
+            self._log("[CFG] ✗ Valeurs de calibration invalides")
+
     # =========================================================================
     # TRILATERATION (PC-side, weighted least-squares)
     # =========================================================================
@@ -629,9 +727,9 @@ class Dashboard:
             return None
 
         d0, d1, d2 = distances[0], distances[1], distances[2]
-        x1, y1 = self.anchors[0]
-        x2, y2 = self.anchors[1]
-        x3, y3 = self.anchors[2]
+        x1, y1 = self.anchors[0][:2]
+        x2, y2 = self.anchors[1][:2]
+        x3, y3 = self.anchors[2][:2]
 
         # --- Étape 1 : Solution initiale par Cramer ---
         a1 = 2.0 * (x2 - x1)
@@ -713,9 +811,10 @@ class Dashboard:
         while True:
             try:
                 data, addr = sock.recvfrom(1024)
+                self.esp32_ip = addr[0]
                 msg = json.loads(data.decode("utf-8"))
                 now = time.time()
-                self.tag_q = msg.get("q", 0.0)
+                esp32_q = msg.get("q", 0.0)
                 self.distances = msg.get("d", [0, 0, 0])
                 self.pkt_count += 1
                 self.last_pkt = now
@@ -724,26 +823,55 @@ class Dashboard:
 
                 # --- PC-side trilateration using dashboard anchor positions ---
                 if len(self.distances) >= 3:
-                    pos = self._trilaterate(self.distances)
+                    # PROJECTION 3D -> 2D
+                    try:
+                        tagz = float(self.ent_tag_z.get())
+                    except:
+                        tagz = self.cfg.get("calibration", {}).get("tag_z", 1.0)
+                        
+                    dist_2d = []
+                    for i in range(3):
+                        az = self.anchors[i][2]
+                        dz = az - tagz
+                        d3d = self.distances[i]
+                        d2d = math.sqrt(max(0.0, d3d*d3d - dz*dz))
+                        dist_2d.append(d2d)
+                        
+                    pos = self._trilaterate(dist_2d)
                     if pos is not None:
-                        new_x, new_y = pos
+                        raw_x, raw_y = pos
+                        
+                        try:
+                            a = float(self.ent_alpha.get())
+                        except:
+                            a = self.cfg.get("calibration", {}).get("alpha", 0.85)
+                            
+                        if self.tag_x == 0.0 and self.tag_y == 0.0:
+                            new_x, new_y = raw_x, raw_y
+                        else:
+                            new_x = self.tag_x * (1.0 - a) + raw_x * a
+                            new_y = self.tag_y * (1.0 - a) + raw_y * a
                         
                         # Recalculate quality PC-side based on actual UI anchors
                         err = 0.0
                         for i in range(3):
-                            ax, ay = self.anchors[i]
+                            ax, ay = self.anchors[i][:2]
                             cd = math.sqrt((new_x - ax)**2 + (new_y - ay)**2)
-                            err += abs(cd - self.distances[i])
+                            err += abs(cd - dist_2d[i])
                         err /= 3.0
                         # 0m error = 100%, 1m+ error = 0%
-                        self.tag_q = max(0.0, min(1.0, 1.0 - err))
+                        new_q = max(0.0, min(1.0, 1.0 - err))
+                        # Lissage de l'affichage qualité pour éviter le clignotement
+                        self.tag_q = (self.tag_q * 0.8) + (new_q * 0.2)
                     else:
                         # Fallback to ESP32-computed position
                         new_x = msg.get("x", 0.0)
                         new_y = msg.get("y", 0.0)
+                        self.tag_q = (self.tag_q * 0.8) + (esp32_q * 0.2)
                 else:
                     new_x = msg.get("x", 0.0)
                     new_y = msg.get("y", 0.0)
+                    self.tag_q = (self.tag_q * 0.8) + (esp32_q * 0.2)
 
                 self.tag_x = new_x
                 self.tag_y = new_y
@@ -809,7 +937,11 @@ class Dashboard:
             self.lbl_status.config(text="✅ Connecté", fg=C["ok"])
 
             # Pan/Tilt
-            th = self.cfg.get("tracking", {}).get("target_height", 1.7)
+            try:
+                th = float(self.ent_cible_z.get())
+            except (ValueError, AttributeError):
+                th = self.cfg.get("tracking", {}).get("target_height", 1.7)
+                
             for j, fx in enumerate(self.fixtures):
                 dx = self.display_x - fx["x"]
                 dy = self.display_y - fx["y"]

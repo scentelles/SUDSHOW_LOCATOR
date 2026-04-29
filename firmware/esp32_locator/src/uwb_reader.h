@@ -28,6 +28,9 @@ public:
     /// Initialise la communication série avec le Tag BU-01
     void begin(HardwareSerial& serial, int rxPin, int txPin, uint32_t baudRate);
 
+    /// Définit les offsets de calibration pour les 3 Anchors
+    void setOffsets(float o0, float o1, float o2);
+
     /// À appeler dans loop() — lit et parse les données série
     void update();
 
@@ -55,6 +58,7 @@ private:
     char            _buffer[256];
     uint8_t         _bufferPos;
     uint32_t        _timeoutMs;
+    float           _offsets[3];
 
     void parseLine(const char* line);
     void parseAiThinkerFormat(const char* line);

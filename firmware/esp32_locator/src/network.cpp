@@ -7,7 +7,8 @@
 #include <ArduinoJson.h>
 
 Network::Network()
-    : _targetIP(UDP_TARGET_IP),
+    : _isListening(false),
+      _targetIP(UDP_TARGET_IP),
       _targetPort(UDP_TARGET_PORT),
       _packetCount(0),
       _lastReconnectAttempt(0) {
@@ -89,4 +90,44 @@ void Network::maintainConnection() {
 
     Serial.println("[NET] ⚠ WiFi déconnecté, tentative de reconnexion...");
     WiFi.reconnect();
+}
+
+void Network::listenForConfig(uint16_t localPort, void (*onConfigReceived)(float, float, float, float)) {
+    if (!isConnected()) return;
+
+    if (!_isListening) {
+        if (_udpRx.begin(localPort)) {
+            Serial.printf("[NET] Écoute UDP sur le port %u\n", localPort);
+            _isListening = true;
+        } else {
+            return;
+        }
+    }
+
+    int packetSize = _udpRx.parsePacket();
+    if (packetSize > 0) {
+        char buffer[256];
+        int len = _udpRx.read(buffer, sizeof(buffer) - 1);
+        if (len > 0) {
+            buffer[len] = '\0';
+            
+            // Format attendu: {"off0":0.8, "off1":0.8, "off2":0.8, "alpha":0.5}
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, buffer);
+            if (!err) {
+                if (doc.containsKey("off0") && doc.containsKey("off1") && doc.containsKey("off2")) {
+                    float o0 = doc["off0"].as<float>();
+                    float o1 = doc["off1"].as<float>();
+                    float o2 = doc["off2"].as<float>();
+                    float a  = doc.containsKey("alpha") ? doc["alpha"].as<float>() : 0.5f;
+                    
+                    if (onConfigReceived) {
+                        onConfigReceived(o0, o1, o2, a);
+                    }
+                }
+            } else {
+                Serial.println("[NET] ✗ Erreur JSON entrant");
+            }
+        }
+    }
 }

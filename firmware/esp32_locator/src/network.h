@@ -29,8 +29,13 @@ public:
     /// Tente de reconnecter le WiFi si déconnecté
     void maintainConnection();
 
+    /// Écoute les paquets UDP entrants (ex: calibration)
+    void listenForConfig(uint16_t localPort, void (*onConfigReceived)(float, float, float, float));
+
 private:
     WiFiUDP _udp;
+    WiFiUDP _udpRx;
+    bool    _isListening;
     const char* _targetIP;
     uint16_t    _targetPort;
     uint32_t    _packetCount;

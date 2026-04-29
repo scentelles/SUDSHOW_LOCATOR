@@ -45,6 +45,15 @@
 #define ANCHOR3_Y           5.0f
 
 // =========================
+//   CALIBRATION UWB
+// =========================
+// Offset en mètres à déduire de la mesure brute pour compenser le délai des antennes (Antenna Delay).
+// Exemple : Si l'Anchor 2 (qui correspond à l'index 1) affiche 1.00m au lieu de 0.20m, mettez 0.80f.
+#define ANCHOR1_OFFSET      0.80f
+#define ANCHOR2_OFFSET      0.80f
+#define ANCHOR3_OFFSET      0.80f
+
+// =========================
 //   UART — BU-01 Tag
 // =========================
 // Broches série pour la connexion au module BU-01 Tag.
@@ -59,12 +68,12 @@
 // Le BU-01 fait ~1 cycle complet (3 anchors) toutes les 1.3s.
 // L'envoi UDP se fait dès qu'un cycle complet est reçu.
 // Ce paramètre limite la fréquence max d'envoi UDP.
-#define UPDATE_RATE_HZ      10
+#define UPDATE_RATE_HZ      30
 
 // Coefficient du filtre passe-bas exponentiel (0.0 à 1.0).
 // Plus la valeur est basse, plus le lissage est fort (mais plus de latence).
-// 0.5 = réactif, 0.2 = très lissé. Ajusté pour ~0.8Hz d'entrée.
-#define FILTER_ALPHA        0.5f
+// 0.85 = très réactif (peu de latence). 0.5 = très lissé (plus de latence).
+#define FILTER_ALPHA        0.85f
 
 // Seuil de distance maximale (en mètres). 
 // Les mesures au-delà sont considérées comme aberrantes et ignorées.

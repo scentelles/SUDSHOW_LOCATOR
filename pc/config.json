@@ -7,23 +7,26 @@
     },
     "anchors": {
         "a0": {
-            "x": 6.7,
-            "y": 0.2
+            "x": 6.4,
+            "y": 0.2,
+            "z": 0.5
         },
         "a1": {
-            "x": 0.3,
-            "y": 0.2
+            "x": 0.8,
+            "y": 0.3,
+            "z": 1.2
         },
         "a2": {
             "x": 4.3,
-            "y": 3.2
+            "y": 3.1,
+            "z": 1.5
         }
     },
     "fixtures": [
         {
             "id": 1,
             "name": "Lyre 1",
-            "x": 2.5,
+            "x": 1.4,
             "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 1,
@@ -38,7 +41,7 @@
         {
             "id": 2,
             "name": "Lyre 2",
-            "x": 2.9,
+            "x": 2.24,
             "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 2,
@@ -53,7 +56,7 @@
         {
             "id": 3,
             "name": "Lyre 3",
-            "x": 3.3,
+            "x": 3.08,
             "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 3,
@@ -68,7 +71,7 @@
         {
             "id": 4,
             "name": "Lyre 4",
-            "x": 3.7,
+            "x": 3.92,
             "y": 3.0,
             "height": 4.0,
             "gma_fixture_id": 4,
@@ -93,5 +96,12 @@
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
         "target_height": 1.7
+    },
+    "calibration": {
+        "a0": 0.7,
+        "a1": 0.7,
+        "a2": 0.9,
+        "alpha": 0.5,
+        "tag_z": 1.4
     }
 }
