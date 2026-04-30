@@ -71,8 +71,22 @@ class Dashboard:
             [acfg.get("a2", {}).get("x", 5.0),   acfg.get("a2", {}).get("y", 5.0),   acfg.get("a2", {}).get("z", 2.0)],
         ]
 
-        # Fixtures — 6 lyres, centrées en fond de scène
-        self.fixtures = self._default_fixtures()
+        # Fixtures
+        cfg_fixtures = self.cfg.get("fixtures", [])
+        if cfg_fixtures:
+            self.fixtures = cfg_fixtures
+            defaults_list = self._default_fixtures()
+            def_fx = defaults_list[0]
+            
+            # Apply defaults for any missing advanced parameters
+            for fx in self.fixtures:
+                for k, v in def_fx.items():
+                    if k not in fx:
+                        fx[k] = v
+                        
+            # (Removed the forced padding to 6 fixtures to allow dynamic count)
+        else:
+            self.fixtures = self._default_fixtures()
 
         # --- State ---
         self.tag_x = 0.0
@@ -111,9 +125,18 @@ class Dashboard:
         self.ft_value = tkfont.Font(family="Consolas", size=11, weight="bold")
         self.ft_small = tkfont.Font(family="Consolas", size=9)
         self.ft_log = tkfont.Font(family="Consolas", size=8)
+        
+        self.test_mode = tk.BooleanVar(value=False)
+
+        # Telnet MA2 state
+        self.ma2_socket = None
+        self.ma2_connected = False
+        self.ma2_targets = {}  # {gma_id: (pan, tilt)}
+        self.ma2_lock = threading.Lock()
 
         self._build_ui()
         self._start_udp()
+        self._start_telnet()
         self._tick()
 
     def _load_config(self):
@@ -138,13 +161,15 @@ class Dashboard:
             f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2), "z": round(a[2], 2)}
             for i, a in enumerate(self.anchors)
         }
-        # Mettre à jour les positions des fixtures (conserver les autres champs)
-        existing_fixtures = data.get("fixtures", [])
+        # Mettre à jour les positions des fixtures
         for i, fx in enumerate(self.fixtures):
-            if i < len(existing_fixtures):
-                existing_fixtures[i]["x"] = round(fx["x"], 2)
-                existing_fixtures[i]["y"] = round(fx["y"], 2)
-        data["fixtures"] = existing_fixtures
+            fx["x"] = round(fx["x"], 2)
+            fx["y"] = round(fx["y"], 2)
+            try:
+                fx["gma_id"] = int(self.fx_ma2_entries[i].get())
+            except:
+                pass
+        data["fixtures"] = self.fixtures
         
         try:
             th = float(self.ent_cible_z.get())
@@ -155,6 +180,17 @@ class Dashboard:
         data["tracking"]["target_height"] = th
         
         data["calibration"] = self.cfg.get("calibration", {"a0": 0.8, "a1": 0.8, "a2": 0.8, "alpha": 0.85, "tag_z": 1.0})
+        
+        # MA2
+        try:
+            data["ma2"] = {
+                "ip": self.ent_ma2_ip.get(),
+                "port": int(self.ent_ma2_port.get()),
+                "user": self.ent_ma2_user.get(),
+                "pass": self.ent_ma2_pass.get()
+            }
+        except:
+            pass
 
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -177,6 +213,14 @@ class Dashboard:
                 "y": self.stage_d - 0.5,
                 "height": 4.0,
                 "gma_id": i + 1,
+                "pan_min": 0.0,
+                "pan_max": 540.0,
+                "pan_offset": 0.0,
+                "pan_invert": False,
+                "tilt_min": -95.0,
+                "tilt_max": 95.0,
+                "tilt_offset": 90.0,
+                "tilt_invert": False,
             })
         return fxs
 
@@ -311,15 +355,12 @@ class Dashboard:
 
         # Fixtures
         self._section(parent, "💡 FIXTURES (Pan/Tilt)")
-        self.fx_labels = []
-        for i, fx in enumerate(self.fixtures):
-            f = tk.Frame(parent, bg=C["panel"])
-            f.pack(fill="x", padx=8, pady=1)
-            tk.Label(f, text=f"{fx['name']}:", font=self.ft_small,
-                     bg=C["panel"], fg=C["fixture"]).pack(side="left")
-            l = tk.Label(f, text="—", font=self.ft_small, bg=C["panel"], fg=C["dim"])
-            l.pack(side="left", padx=4)
-            self.fx_labels.append(l)
+        self.frm_fixtures = tk.Frame(parent, bg=C["panel"])
+        self.frm_fixtures.pack(fill="x")
+        self._build_fixtures_list()
+        
+        btn_add_fx = tk.Button(parent, text="[+] Ajouter Lyre", font=("Segoe UI", 8), bg=C["border"], fg=C["text"], bd=0, command=self._add_fixture)
+        btn_add_fx.pack(pady=(2, 8))
 
         fh = tk.Frame(parent, bg=C["panel"])
         fh.pack(fill="x", padx=8, pady=(4, 0))
@@ -368,9 +409,48 @@ class Dashboard:
             
         btn_cal = tk.Button(parent, text="Appliquer Calibration", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, activebackground=C["accent"], activeforeground="#000", command=self._send_calibration)
         btn_cal.pack(pady=8)
+        
+        # GrandMA2 Telnet
+        self._section(parent, "🎛️ GRANDMA2 TELNET")
+        
+        f_ma2_ip = tk.Frame(parent, bg=C["panel"])
+        f_ma2_ip.pack(fill="x", padx=8, pady=1)
+        tk.Label(f_ma2_ip, text="IP:", font=self.ft_small, bg=C["panel"], fg=C["dim"], width=4, anchor="e").pack(side="left")
+        self.ent_ma2_ip = tk.Entry(f_ma2_ip, width=12, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        self.ent_ma2_ip.insert(0, self.cfg.get("ma2", {}).get("ip", "127.0.0.1"))
+        self.ent_ma2_ip.pack(side="left", padx=4)
+        
+        tk.Label(f_ma2_ip, text="Port:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.ent_ma2_port = tk.Entry(f_ma2_ip, width=6, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        self.ent_ma2_port.insert(0, str(self.cfg.get("ma2", {}).get("port", 30000)))
+        self.ent_ma2_port.pack(side="left", padx=4)
+        
+        f_ma2_auth = tk.Frame(parent, bg=C["panel"])
+        f_ma2_auth.pack(fill="x", padx=8, pady=1)
+        tk.Label(f_ma2_auth, text="User:", font=self.ft_small, bg=C["panel"], fg=C["dim"], width=4, anchor="e").pack(side="left")
+        self.ent_ma2_user = tk.Entry(f_ma2_auth, width=8, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        self.ent_ma2_user.insert(0, self.cfg.get("ma2", {}).get("user", "administrator"))
+        self.ent_ma2_user.pack(side="left", padx=4)
+        
+        tk.Label(f_ma2_auth, text="Pass:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.ent_ma2_pass = tk.Entry(f_ma2_auth, width=8, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+        self.ent_ma2_pass.insert(0, self.cfg.get("ma2", {}).get("pass", "admin"))
+        self.ent_ma2_pass.pack(side="left", padx=4)
+        
+        f_ma2_btn = tk.Frame(parent, bg=C["panel"])
+        f_ma2_btn.pack(fill="x", padx=8, pady=(4, 8))
+        self.btn_ma2_connect = tk.Button(f_ma2_btn, text="Connecter", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, activebackground=C["accent"], activeforeground="#000", command=self._toggle_ma2)
+        self.btn_ma2_connect.pack(side="left")
+        self.lbl_ma2_status = tk.Label(f_ma2_btn, text="✗ Déconnecté", font=self.ft_small, bg=C["panel"], fg="#ff8888")
+        self.lbl_ma2_status.pack(side="left", padx=8)
 
         # Info
         self._section(parent, "ℹ️  INFO")
+        tk.Checkbutton(parent, text="Mode Test (Clic sur scène)", font=self.ft_small,
+                       bg=C["panel"], fg=C["text"], selectcolor=C["canvas_bg"],
+                       activebackground=C["panel"], activeforeground=C["text"],
+                       variable=self.test_mode).pack(anchor="w", padx=8, pady=(0,4))
+                       
         self.lbl_pkt = tk.Label(parent, text="Paquets: 0", font=self.ft_small,
                                  bg=C["panel"], fg=C["dim"])
         self.lbl_pkt.pack(anchor="w", padx=8)
@@ -385,6 +465,117 @@ class Dashboard:
         tk.Label(parent, text="💡 Glissez les anchors (cercles\nbleus) et les lyres (carrés jaunes)\npour ajuster les positions.",
                  font=self.ft_small, bg=C["panel"], fg=C["dim"],
                  justify="left").pack(anchor="w", padx=8, pady=(16, 0))
+
+    def _open_fixture_settings(self, idx):
+        fx = self.fixtures[idx]
+        top = tk.Toplevel(self.root)
+        top.title(f"⚙️ {fx['name']}")
+        top.configure(bg=C["bg"])
+        top.geometry("280x380")
+        top.transient(self.root)
+        top.grab_set()
+
+        def _row(parent, label, key, default):
+            f = tk.Frame(parent, bg=C["bg"])
+            f.pack(fill="x", padx=10, pady=5)
+            tk.Label(f, text=label, font=self.ft_label, bg=C["bg"], fg=C["text"], width=14, anchor="w").pack(side="left")
+            ent = tk.Entry(f, width=8, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"])
+            ent.insert(0, str(fx.get(key, default)))
+            ent.pack(side="right")
+            return ent
+            
+        def _check(parent, label, key, default):
+            f = tk.Frame(parent, bg=C["bg"])
+            f.pack(fill="x", padx=10, pady=2)
+            var = tk.BooleanVar(value=fx.get(key, default))
+            cb = tk.Checkbutton(f, text=label, font=self.ft_label, bg=C["bg"], fg=C["text"],
+                                selectcolor=C["canvas_bg"], activebackground=C["bg"],
+                                activeforeground=C["text"], variable=var)
+            cb.pack(side="left")
+            return var
+
+        e_h = _row(top, "Hauteur Z (m)", "height", 4.0)
+        e_pmin = _row(top, "Pan Min (°)", "pan_min", 0.0)
+        e_pmax = _row(top, "Pan Max (°)", "pan_max", 540.0)
+        e_poff = _row(top, "Pan Offset (°)", "pan_offset", 0.0)
+        v_pinv = _check(top, "Inverser Pan", "pan_invert", False)
+        
+        e_tmin = _row(top, "Tilt Min (°)", "tilt_min", -95.0)
+        e_tmax = _row(top, "Tilt Max (°)", "tilt_max", 95.0)
+        e_toff = _row(top, "Tilt Offset (°)", "tilt_offset", 90.0)
+        v_tinv = _check(top, "Inverser Tilt", "tilt_invert", False)
+        
+        def _save():
+            try:
+                fx["height"] = float(e_h.get())
+                fx["pan_min"] = float(e_pmin.get())
+                fx["pan_max"] = float(e_pmax.get())
+                fx["pan_offset"] = float(e_poff.get())
+                fx["pan_invert"] = v_pinv.get()
+                fx["tilt_min"] = float(e_tmin.get())
+                fx["tilt_max"] = float(e_tmax.get())
+                fx["tilt_offset"] = float(e_toff.get())
+                fx["tilt_invert"] = v_tinv.get()
+                self._save_config()
+                self._draw()
+                top.destroy()
+            except ValueError:
+                pass
+                
+        tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, command=_save).pack(pady=15)
+
+        tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, command=_save).pack(pady=15)
+
+    def _build_fixtures_list(self):
+        for widget in self.frm_fixtures.winfo_children():
+            widget.destroy()
+            
+        self.fx_labels = []
+        self.fx_ma2_entries = []
+        
+        for i, fx in enumerate(self.fixtures):
+            f = tk.Frame(self.frm_fixtures, bg=C["panel"])
+            f.pack(fill="x", padx=8, pady=1)
+            
+            # Trash button
+            btn_del = tk.Button(f, text="🗑️", font=("Segoe UI", 8), bg=C["panel"], fg="#ff4444", bd=0, command=lambda idx=i: self._remove_fixture(idx))
+            btn_del.pack(side="right", padx=2)
+            
+            # Gear button
+            btn_gear = tk.Button(f, text="⚙️", font=("Segoe UI", 8), bg=C["panel"], fg=C["text"], bd=0, command=lambda idx=i: self._open_fixture_settings(idx))
+            btn_gear.pack(side="right", padx=2)
+            
+            # MA2 ID entry
+            tk.Label(f, text="ID:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+            ent_id = tk.Entry(f, width=3, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+            ent_id.insert(0, str(fx.get("gma_id", i+1)))
+            ent_id.pack(side="left", padx=4)
+            self.fx_ma2_entries.append(ent_id)
+            
+            tk.Label(f, text=f"{fx['name']}:", font=self.ft_small,
+                     bg=C["panel"], fg=C["fixture"]).pack(side="left")
+            l = tk.Label(f, text="—", font=self.ft_small, bg=C["panel"], fg=C["dim"])
+            l.pack(side="left", padx=4)
+            self.fx_labels.append(l)
+
+    def _add_fixture(self):
+        new_id = len(self.fixtures) + 1
+        new_fx = self._default_fixtures()[0].copy()
+        new_fx["name"] = f"Lyre {new_id}"
+        new_fx["gma_id"] = new_id
+        new_fx["x"] = self.stage_w / 2
+        new_fx["y"] = self.stage_d - 0.5
+        self.fixtures.append(new_fx)
+        self._save_config()
+        self._build_fixtures_list()
+        self._draw()
+
+    def _remove_fixture(self, idx):
+        if 0 <= idx < len(self.fixtures):
+            del self.fixtures[idx]
+            self._save_config()
+            self._build_fixtures_list()
+            self._draw()
 
     def _section(self, parent, text):
         tk.Frame(parent, bg=C["border"], height=1).pack(fill="x", padx=8, pady=(12, 4))
@@ -609,6 +800,10 @@ class Dashboard:
             self._drag_idx = best_idx
             self._dragging = True
             self.canvas.config(cursor="fleur")
+        elif self.test_mode.get():
+            self._drag_type = "test_tag"
+            self._dragging = True
+            self._on_drag(event)
 
     def _on_drag(self, event):
         if not self._dragging:
@@ -628,6 +823,14 @@ class Dashboard:
         elif self._drag_type == "fixture":
             self.fixtures[self._drag_idx]["x"] = sx
             self.fixtures[self._drag_idx]["y"] = sy
+        elif self._drag_type == "test_tag":
+            self.tag_x = sx
+            self.tag_y = sy
+            self.display_x = sx
+            self.display_y = sy
+            self.connected = True
+            self.last_pkt = time.time()
+            self.tag_q = 1.0
 
         self._draw()
 
@@ -635,12 +838,9 @@ class Dashboard:
         if self._dragging:
             self._dragging = False
             self.canvas.config(cursor="crosshair")
-            self._log(f"[UI] Déplacé {self._drag_type} {self._drag_idx} → "
-                       f"({self.anchors[self._drag_idx][0]:.1f}, {self.anchors[self._drag_idx][1]:.1f})"
-                       if self._drag_type == "anchor"
-                       else f"[UI] Déplacé {self.fixtures[self._drag_idx]['name']} → "
-                            f"({self.fixtures[self._drag_idx]['x']:.1f}, {self.fixtures[self._drag_idx]['y']:.1f})")
-            self._save_config()
+            if self._drag_type in ["anchor", "fixture"]:
+                self._save_config()
+                self._log(f"[UI] Déplacé {self._drag_type}")
 
     # =========================================================================
     # STAGE SIZE
@@ -794,6 +994,112 @@ class Dashboard:
         self.log_text.config(state="disabled")
 
     # =========================================================================
+    # GRANDMA2 TELNET
+    # =========================================================================
+    def _start_telnet(self):
+        t = threading.Thread(target=self._telnet_loop, daemon=True)
+        t.start()
+        
+    def _toggle_ma2(self):
+        if self.ma2_connected:
+            self.ma2_connected = False
+            self.btn_ma2_connect.config(text="Connecter")
+            self.lbl_ma2_status.config(text="✗ Déconnecté", fg="#ff8888")
+            if self.ma2_socket:
+                try:
+                    self.ma2_socket.close()
+                except:
+                    pass
+                self.ma2_socket = None
+        else:
+            self.btn_ma2_connect.config(text="Déconnecter")
+            self.lbl_ma2_status.config(text="... Connexion", fg="#ffaa00")
+            self._save_config()  # Save the typed settings!
+            self.ma2_connected = True  # Signal thread to connect
+            
+    def _telnet_loop(self):
+        while True:
+            if not self.ma2_connected:
+                time.sleep(0.5)
+                continue
+                
+            try:
+                ip = self.ent_ma2_ip.get()
+                port = int(self.ent_ma2_port.get())
+                user = self.ent_ma2_user.get()
+                pw = self.ent_ma2_pass.get()
+                
+                self._log(f"[MA2] Connexion à {ip}:{port}...")
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3.0)
+                s.connect((ip, port))
+                s.settimeout(None)
+                
+                # Login
+                login_cmd = f'login "{user}" "{pw}"\r\n'
+                s.sendall(login_cmd.encode("utf-8"))
+                
+                self.ma2_socket = s
+                self.lbl_ma2_status.config(text="✓ Connecté", fg="#88ff88")
+                self._log("[MA2] ✓ Telnet connecté et authentifié")
+                
+                # Main loop at 15Hz (0.066s)
+                last_cmd = ""
+                while self.ma2_connected:
+                    time.sleep(0.066)
+                    
+                    with self.ma2_lock:
+                        targets = list(self.ma2_targets.items())
+                        
+                    if not targets:
+                        continue
+                        
+                    # Build MA2 command
+                    # Correct syntax to avoid "Error: Fixture X": Fixture X Attribute "Pan" At Y ; Fixture X Attribute "Tilt" At Z
+                    parts = []
+                    for gid, (pan, tilt) in targets:
+                        parts.append(f'Fixture {gid} Attribute "Pan" At {pan:.1f} ; Fixture {gid} Attribute "Tilt" At {tilt:.1f}')
+                        
+                    cmd = " ; ".join(parts) + "\r\n"
+                    
+                    if cmd == last_cmd:
+                        continue
+                    last_cmd = cmd
+                    
+                    try:
+                        s.sendall(cmd.encode("utf-8"))
+                        
+                        # Vider le buffer de réception pour éviter que la MA2 ne freeze
+                        try:
+                            s.setblocking(False)
+                            while True:
+                                data = s.recv(4096)
+                                if not data:
+                                    break
+                        except BlockingIOError:
+                            pass  # Plus rien à lire
+                        finally:
+                            s.setblocking(True)
+                            
+                    except Exception as e:
+                        self._log(f"[MA2] ✗ Erreur envoi: {e}")
+                        break
+                        
+            except Exception as e:
+                self._log(f"[MA2] ✗ Echec: {e}")
+                
+            if self.ma2_socket:
+                try:
+                    self.ma2_socket.close()
+                except:
+                    pass
+                self.ma2_socket = None
+                
+            if self.ma2_connected:
+                self.lbl_ma2_status.config(text="⚠ Reconnexion...", fg="#ffaa00")
+                time.sleep(2.0)
+
+    # =========================================================================
     # UDP
     # =========================================================================
     def _start_udp(self):
@@ -942,16 +1248,55 @@ class Dashboard:
             except (ValueError, AttributeError):
                 th = self.cfg.get("tracking", {}).get("target_height", 1.7)
                 
+            new_targets = {}
             for j, fx in enumerate(self.fixtures):
                 dx = self.display_x - fx["x"]
                 dy = self.display_y - fx["y"]
                 dz = fx["height"] - th
                 dh = math.sqrt(dx*dx + dy*dy)
-                pan = math.degrees(math.atan2(dx, dy))
-                tilt = math.degrees(math.atan2(dz, dh)) if dh > 0.01 else 90
+                pan_math = math.degrees(math.atan2(dx, dy))
+                tilt_math = math.degrees(math.atan2(dz, dh)) if dh > 0.01 else 90
+                
+                # Inversion si accrochée à l'envers
+                if fx.get("pan_invert", False):
+                    pan_math = -pan_math
+                if fx.get("tilt_invert", False):
+                    tilt_math = -tilt_math
+                
+                # Normalisation Pan (0-360)
+                if pan_math < 0:
+                    pan_math += 360.0
+                    
+                # Application des offsets et limites
+                ma_pan = pan_math + float(fx.get("pan_offset", 0.0))
+                ma_pan = max(float(fx.get("pan_min", 0.0)), min(float(fx.get("pan_max", 540.0)), ma_pan))
+                
+                ma_tilt = tilt_math + float(fx.get("tilt_offset", 90.0))
+                ma_tilt = max(float(fx.get("tilt_min", -95.0)), min(float(fx.get("tilt_max", 95.0)), ma_tilt))
+                
+                # Visual warning if hitting bounds
+                if (ma_pan <= float(fx.get("pan_min", 0.0)) or 
+                    ma_pan >= float(fx.get("pan_max", 540.0)) or 
+                    ma_tilt <= float(fx.get("tilt_min", -95.0)) or 
+                    ma_tilt >= float(fx.get("tilt_max", 95.0))):
+                    status_col = "#aa4444"
+                else:
+                    status_col = C["text"]
+                    
                 if j < len(self.fx_labels):
                     self.fx_labels[j].config(
-                        text=f"P={pan:.1f}° T={tilt:.1f}°", fg=C["text"])
+                        text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
+                        
+                # Store for MA2 Telnet thread
+                try:
+                    gma_id = int(self.fx_ma2_entries[j].get())
+                except:
+                    gma_id = fx.get("gma_id", j + 1)
+                    
+                new_targets[gma_id] = (ma_pan, ma_tilt)
+                
+            with self.ma2_lock:
+                self.ma2_targets = new_targets
         else:
             self.lbl_status.config(text="⏳ En attente...", fg=C["dim"])
 
