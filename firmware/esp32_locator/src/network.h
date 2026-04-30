@@ -32,6 +32,12 @@ public:
     /// Écoute les paquets UDP entrants (ex: calibration)
     void listenForConfig(uint16_t localPort, void (*onConfigReceived)(float, float, float, float));
 
+    /// Envoie un heartbeat périodique au dashboard (toutes les 2s)
+    void sendHeartbeat();
+
+    /// Vérifie si le dashboard PC a envoyé un heartbeat récemment
+    bool dashboardConnected() const;
+
 private:
     WiFiUDP _udp;
     WiFiUDP _udpRx;
@@ -40,4 +46,6 @@ private:
     uint16_t    _targetPort;
     uint32_t    _packetCount;
     uint32_t    _lastReconnectAttempt;
+    uint32_t    _lastDashboardHeartbeat;
+    uint32_t    _lastHeartbeatSent;
 };

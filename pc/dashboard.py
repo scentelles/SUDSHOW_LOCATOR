@@ -137,6 +137,7 @@ class Dashboard:
         self._build_ui()
         self._start_udp()
         self._start_telnet()
+        self._start_heartbeat()
         self._tick()
 
     def _load_config(self):
@@ -238,6 +239,11 @@ class Dashboard:
         self.lbl_status = tk.Label(top, text="⏳ En attente...",
                                     font=self.ft_label, bg=C["panel"], fg=C["dim"])
         self.lbl_status.pack(side="right", padx=8)
+
+        # ESP32 connection indicator
+        self.lbl_esp32 = tk.Label(top, text="📡 ESP32: --",
+                                   font=self.ft_label, bg=C["panel"], fg=C["dim"])
+        self.lbl_esp32.pack(side="right", padx=8)
 
         self.lbl_rate = tk.Label(top, text="", font=self.ft_label,
                                   bg=C["panel"], fg=C["dim"])
@@ -1107,6 +1113,22 @@ class Dashboard:
         t = threading.Thread(target=self._udp_loop, args=(port,), daemon=True)
         t.start()
 
+    def _start_heartbeat(self):
+        """Envoie un ping UDP périodique à l'ESP32 pour qu'il sache que le dashboard est connecté."""
+        t = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        t.start()
+
+    def _heartbeat_loop(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ping_msg = json.dumps({"ping": 1}).encode("utf-8")
+        while True:
+            try:
+                if self.esp32_ip:
+                    sock.sendto(ping_msg, (self.esp32_ip, 5001))
+            except Exception:
+                pass
+            time.sleep(2.0)
+
     def _udp_loop(self, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1120,6 +1142,14 @@ class Dashboard:
                 self.esp32_ip = addr[0]
                 msg = json.loads(data.decode("utf-8"))
                 now = time.time()
+
+                # --- Heartbeat packet (ESP32 annonce sa présence) ---
+                if "heartbeat" in msg:
+                    self.last_pkt = now
+                    if not self.connected:
+                        self._log(f"[NET] 📡 ESP32 détecté à {addr[0]}")
+                    continue
+
                 esp32_q = msg.get("q", 0.0)
                 self.distances = msg.get("d", [0, 0, 0])
                 self.pkt_count += 1
@@ -1298,7 +1328,22 @@ class Dashboard:
             with self.ma2_lock:
                 self.ma2_targets = new_targets
         else:
-            self.lbl_status.config(text="⏳ En attente...", fg=C["dim"])
+            self.lbl_status.config(text="⏳ En attente données UWB...", fg=C["dim"])
+
+        # ESP32 indicator (basé sur heartbeat, indépendant du tracking UWB)
+        esp32_age = time.time() - self.last_pkt if self.last_pkt > 0 else 999
+        if self.esp32_ip and esp32_age < 5:
+            self.lbl_esp32.config(
+                text=f"📡 ESP32: {self.esp32_ip}",
+                fg=C["ok"])
+        elif self.esp32_ip:
+            self.lbl_esp32.config(
+                text=f"📡 ESP32: {self.esp32_ip} (perdu)",
+                fg=C["bad"])
+        else:
+            self.lbl_esp32.config(
+                text="📡 ESP32: --",
+                fg=C["dim"])
 
         # Rate
         now = time.time()

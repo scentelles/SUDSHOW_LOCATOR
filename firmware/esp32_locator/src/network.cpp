@@ -11,7 +11,9 @@ Network::Network()
       _targetIP(UDP_TARGET_IP),
       _targetPort(UDP_TARGET_PORT),
       _packetCount(0),
-      _lastReconnectAttempt(0) {
+      _lastReconnectAttempt(0),
+      _lastDashboardHeartbeat(0),
+      _lastHeartbeatSent(0) {
 }
 
 bool Network::connectWiFi(const char* ssid, const char* password, uint32_t timeoutMs) {
@@ -111,7 +113,11 @@ void Network::listenForConfig(uint16_t localPort, void (*onConfigReceived)(float
         if (len > 0) {
             buffer[len] = '\0';
             
+            // Tout paquet reçu du dashboard = heartbeat
+            _lastDashboardHeartbeat = millis();
+            
             // Format attendu: {"off0":0.8, "off1":0.8, "off2":0.8, "alpha":0.5}
+            // ou bien: {"ping":1} pour le heartbeat simple
             JsonDocument doc;
             DeserializationError err = deserializeJson(doc, buffer);
             if (!err) {
@@ -125,9 +131,29 @@ void Network::listenForConfig(uint16_t localPort, void (*onConfigReceived)(float
                         onConfigReceived(o0, o1, o2, a);
                     }
                 }
+                // ping packets are silently accepted (heartbeat already updated)
             } else {
                 Serial.println("[NET] ✗ Erreur JSON entrant");
             }
         }
     }
+}
+
+bool Network::dashboardConnected() const {
+    if (_lastDashboardHeartbeat == 0) return false;
+    return (millis() - _lastDashboardHeartbeat) < 5000;
+}
+
+void Network::sendHeartbeat() {
+    if (!isConnected()) return;
+
+    uint32_t now = millis();
+    if (now - _lastHeartbeatSent < 2000) return;  // Toutes les 2 secondes
+    _lastHeartbeatSent = now;
+
+    // Envoyer un petit paquet heartbeat au dashboard
+    const char* hb = "{\"heartbeat\":1}";
+    _udp.beginPacket(_targetIP, _targetPort);
+    _udp.write((uint8_t*)hb, strlen(hb));
+    _udp.endPacket();
 }

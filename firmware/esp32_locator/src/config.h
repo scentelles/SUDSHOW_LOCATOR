@@ -95,3 +95,16 @@
 
 // Mettre à 1 pour envoyer aussi les distances brutes dans le paquet UDP.
 #define SEND_RAW_DISTANCES  1
+
+// =========================
+//   DISPLAY (OLED)
+// =========================
+#ifdef BOARD_TTGO
+  // OLED I2C Pins pour TTGO (ESP32 avec slot 18650)
+  #define OLED_SDA 5
+  #define OLED_SCL 4
+  // Adresse I2C classique pour un SSD1306 0.96"
+  #define OLED_ADDR 0x3C
+  #define SCREEN_WIDTH 128
+  #define SCREEN_HEIGHT 64
+#endif

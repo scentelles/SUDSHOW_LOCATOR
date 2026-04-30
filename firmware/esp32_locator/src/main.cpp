@@ -12,6 +12,13 @@
 #include "network.h"
 #include <Preferences.h>
 
+#ifdef BOARD_TTGO
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+#endif
+
 // --- Instances globales ---
 UWBReader      uwb;
 Trilateration  trilat;
@@ -94,6 +101,21 @@ void setup() {
     Serial.println();
     Serial.println("[MAIN] ✓ Système prêt — en attente des données UWB...");
     Serial.println("────────────────────────────────────────────");
+
+#ifdef BOARD_TTGO
+    Wire.begin(OLED_SDA, OLED_SCL);
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+        Serial.println("[MAIN] ⚠ Échec initialisation OLED");
+    } else {
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0,0);
+        display.println("SudShow Locator");
+        display.println("System Ready!");
+        display.display();
+    }
+#endif
 }
 
 // =============================================================================
@@ -105,6 +127,9 @@ void loop() {
 
     // --- Maintenir la connexion WiFi ---
     net.maintainConnection();
+
+    // --- Heartbeat vers le dashboard (même sans UWB) ---
+    net.sendHeartbeat();
 
     // --- Écouter les nouvelles configurations de calibration ---
     net.listenForConfig(5001, onConfigReceived);
@@ -125,6 +150,23 @@ void loop() {
                           uwb.isValid(0) ? "✓" : "✗",
                           uwb.isValid(1) ? "✓" : "✗",
                           uwb.isValid(2) ? "✓" : "✗");
+#ifdef BOARD_TTGO
+            display.clearDisplay();
+            display.setCursor(0,0);
+            display.println("SudShow Locator");
+            if (net.isConnected()) {
+                display.print("IP: "); display.println(WiFi.localIP());
+            } else {
+                display.println("WiFi: Offline");
+            }
+            display.print("Dash: ");
+            display.println(net.dashboardConnected() ? "OK" : "--");
+            display.println("Waiting anchors:");
+            display.print("A0:"); display.print(uwb.isValid(0) ? "OK " : "-- ");
+            display.print("A1:"); display.print(uwb.isValid(1) ? "OK " : "-- ");
+            display.print("A2:"); display.println(uwb.isValid(2) ? "OK" : "--");
+            display.display();
+#endif
         }
         return;
     }
@@ -152,6 +194,26 @@ void loop() {
 
     // --- Envoi UDP ---
     net.sendPosition(pos.x, pos.y, pos.quality, d0, d1, d2, SEND_RAW_DISTANCES);
+
+#ifdef BOARD_TTGO
+    static uint32_t displayCounter = 0;
+    if (displayCounter++ % 15 == 0) { // Update approx twice per second
+        display.clearDisplay();
+        display.setCursor(0,0);
+        display.println("SudShow Locator");
+        if (net.isConnected()) {
+            display.print("IP: "); display.println(WiFi.localIP());
+        } else {
+            display.println("WiFi: Offline");
+        }
+        display.print("Dash: ");
+        display.println(net.dashboardConnected() ? "OK" : "--");
+        display.print("Pos: "); display.print(pos.x, 2); display.print(", "); display.println(pos.y, 2);
+        display.printf("A0:%.1f A1:%.1f A2:%.1f\n", d0, d1, d2);
+        display.print("Q:"); display.print(pos.quality * 100, 0); display.print("%");
+        display.display();
+    }
+#endif
 
     // --- Stats périodiques (toutes les 5 secondes) ---
     if (now - lastStatsTime >= 5000) {
