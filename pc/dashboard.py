@@ -134,6 +134,11 @@ class Dashboard:
         self.ma2_targets = {}  # {gma_id: (pan, tilt)}
         self.ma2_lock = threading.Lock()
 
+        # Battery monitoring
+        self.bat_voltage = 0.0
+        # Historique: (timestamp, voltage) — 1 sample/2s = 3600 samples pour 2h
+        self.bat_history = collections.deque(maxlen=3600)
+
         self._build_ui()
         self._start_udp()
         self._start_telnet()
@@ -236,6 +241,22 @@ class Dashboard:
         tk.Label(top, text="🎯 SudShow Locator", font=self.ft_title,
                  bg=C["panel"], fg=C["accent"]).pack(side="left")
 
+        # Bouton MA2 dans la top bar
+        self.btn_ma2_top = tk.Button(top, text="🎬 MA2", font=self.ft_label,
+                                     bg="#aa6600", fg="#fff", bd=0, padx=12, pady=2,
+                                     activebackground="#cc8800", activeforeground="#fff",
+                                     cursor="hand2",
+                                     command=self._toggle_ma2)
+        self.btn_ma2_top.pack(side="left", padx=(16, 0))
+
+        # Bouton Manual mode dans la top bar
+        self.btn_manual = tk.Button(top, text="✋ Manual", font=self.ft_label,
+                                    bg="#555555", fg="#ccc", bd=0, padx=12, pady=2,
+                                    activebackground="#777777", activeforeground="#fff",
+                                    cursor="hand2",
+                                    command=self._toggle_manual)
+        self.btn_manual.pack(side="left", padx=(8, 0))
+
         self.lbl_status = tk.Label(top, text="⏳ En attente...",
                                     font=self.ft_label, bg=C["panel"], fg=C["dim"])
         self.lbl_status.pack(side="right", padx=8)
@@ -248,6 +269,12 @@ class Dashboard:
         self.lbl_rate = tk.Label(top, text="", font=self.ft_label,
                                   bg=C["panel"], fg=C["dim"])
         self.lbl_rate.pack(side="right", padx=8)
+
+        # Battery voltage label (clickable)
+        self.lbl_bat = tk.Label(top, text="🔋 --", font=self.ft_label,
+                                bg=C["panel"], fg=C["dim"], cursor="hand2")
+        self.lbl_bat.pack(side="right", padx=8)
+        self.lbl_bat.bind("<Button-1>", lambda e: self._show_bat_history())
 
         # Stage size
         sz_frame = tk.Frame(top, bg=C["panel"])
@@ -452,10 +479,7 @@ class Dashboard:
 
         # Info
         self._section(parent, "ℹ️  INFO")
-        tk.Checkbutton(parent, text="Mode Test (Clic sur scène)", font=self.ft_small,
-                       bg=C["panel"], fg=C["text"], selectcolor=C["canvas_bg"],
-                       activebackground=C["panel"], activeforeground=C["text"],
-                       variable=self.test_mode).pack(anchor="w", padx=8, pady=(0,4))
+
                        
         self.lbl_pkt = tk.Label(parent, text="Paquets: 0", font=self.ft_small,
                                  bg=C["panel"], fg=C["dim"])
@@ -528,8 +552,6 @@ class Dashboard:
             except ValueError:
                 pass
                 
-        tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, command=_save).pack(pady=15)
-
         tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, command=_save).pack(pady=15)
 
     def _build_fixtures_list(self):
@@ -1011,6 +1033,7 @@ class Dashboard:
             self.ma2_connected = False
             self.btn_ma2_connect.config(text="Connecter")
             self.lbl_ma2_status.config(text="✗ Déconnecté", fg="#ff8888")
+            self.btn_ma2_top.config(bg="#aa6600", text="🎬 MA2")
             if self.ma2_socket:
                 try:
                     self.ma2_socket.close()
@@ -1020,8 +1043,19 @@ class Dashboard:
         else:
             self.btn_ma2_connect.config(text="Déconnecter")
             self.lbl_ma2_status.config(text="... Connexion", fg="#ffaa00")
-            self._save_config()  # Save the typed settings!
-            self.ma2_connected = True  # Signal thread to connect
+            self.btn_ma2_top.config(bg="#227722", text="🎬 MA2 ●")
+            self._save_config()
+            self.ma2_connected = True
+
+    def _toggle_manual(self):
+        current = self.test_mode.get()
+        self.test_mode.set(not current)
+        if not current:
+            self.btn_manual.config(fg="#fff")
+            self._log("[UI] Mode manuel activé (clic sur scène)")
+        else:
+            self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual")
+            self._log("[UI] Mode manuel désactivé")
             
     def _telnet_loop(self):
         while True:
@@ -1146,6 +1180,9 @@ class Dashboard:
                 # --- Heartbeat packet (ESP32 annonce sa présence) ---
                 if "heartbeat" in msg:
                     self.last_pkt = now
+                    if "bat" in msg:
+                        self.bat_voltage = msg["bat"]
+                        self.bat_history.append((now, self.bat_voltage))
                     if not self.connected:
                         self._log(f"[NET] 📡 ESP32 détecté à {addr[0]}")
                     continue
@@ -1156,6 +1193,9 @@ class Dashboard:
                 self.last_pkt = now
                 self.connected = True
                 self._rate_n += 1
+                if "bat" in msg:
+                    self.bat_voltage = msg["bat"]
+                    self.bat_history.append((now, self.bat_voltage))
 
                 # --- PC-side trilateration using dashboard anchor positions ---
                 if len(self.distances) >= 3:
@@ -1238,7 +1278,7 @@ class Dashboard:
                     self._log(f"[TRI] x={new_x:.3f} y={new_y:.3f}  {d_str}  v={vel:.2f}m/s")
 
             except socket.timeout:
-                if time.time() - self.last_pkt > 3:
+                if time.time() - self.last_pkt > 3 and not self.test_mode.get():
                     self.connected = False
             except json.JSONDecodeError as e:
                 self._log(f"[ERR] JSON invalide: {e}")
@@ -1354,6 +1394,12 @@ class Dashboard:
         self.lbl_rate.config(text=f"{self.pkt_rate:.1f} pkt/s  |  #{self.pkt_count}")
         self.lbl_pkt.config(text=f"Paquets: {self.pkt_count}")
 
+        # Battery voltage
+        if self.bat_voltage > 0.1:
+            self.lbl_bat.config(text=f"🔋 {self.bat_voltage:.2f}V", fg=C["ok"] if self.bat_voltage > 3.5 else C["warn"] if self.bat_voltage > 3.2 else C["bad"])
+        else:
+            self.lbl_bat.config(text="🔋 --", fg=C["dim"])
+
         # Velocity & prediction status
         if self.connected:
             vel = math.sqrt(self._vel_x**2 + self._vel_y**2)
@@ -1368,6 +1414,19 @@ class Dashboard:
         else:
             self.lbl_vel.config(text="Vitesse: —")
             self.lbl_predict.config(text="")
+
+        # MA2 button blink (vert clignotant quand connecté)
+        if self.ma2_connected and self.ma2_socket:
+            blink = int(time.time() * 2) % 2 == 0
+            self.btn_ma2_top.config(bg="#33cc33" if blink else "#227722")
+        elif self.ma2_connected:
+            self.btn_ma2_top.config(bg="#cc8800")
+
+        # Manual button blink (bleu clignotant quand actif)
+        if self.test_mode.get():
+            blink = int(time.time() * 2) % 2 == 0
+            self.btn_manual.config(bg="#3388ff" if blink else "#2255aa",
+                                   text="✋ Manual ●" if blink else "✋ Manual")
 
         self.root.after(33, self._tick)
 
@@ -1385,6 +1444,95 @@ class Dashboard:
 
     def run(self):
         self.root.mainloop()
+
+    # =========================================================================
+    # BATTERY HISTORY POPUP
+    # =========================================================================
+    def _show_bat_history(self):
+        if len(self.bat_history) < 2:
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title("🔋 Historique tension GPIO32")
+        top.geometry("700x400")
+        top.configure(bg=C["bg"])
+
+        tk.Label(top, text="Tension GPIO32 (2 dernières heures)",
+                 font=self.ft_title, bg=C["bg"], fg=C["accent"]).pack(pady=8)
+
+        canvas = tk.Canvas(top, bg=C["canvas_bg"], highlightthickness=0)
+        canvas.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
+        def _draw(event=None):
+            canvas.delete("all")
+            w = canvas.winfo_width()
+            h = canvas.winfo_height()
+            if w < 50 or h < 50:
+                return
+
+            margin_l, margin_r, margin_t, margin_b = 50, 20, 20, 35
+            gw = w - margin_l - margin_r
+            gh = h - margin_t - margin_b
+
+            data = list(self.bat_history)
+            now = time.time()
+            t_min = now - 7200  # 2 heures
+            # Filter to last 2h
+            data = [(t, v) for t, v in data if t >= t_min]
+            if len(data) < 2:
+                canvas.create_text(w//2, h//2, text="Pas assez de données",
+                                   fill=C["dim"], font=self.ft_label)
+                return
+
+            t_start = data[0][0]
+            t_end = data[-1][0]
+            t_range = max(t_end - t_start, 1.0)
+
+            voltages = [v for _, v in data]
+            v_min = min(voltages) - 0.05
+            v_max = max(voltages) + 0.05
+            v_range = max(v_max - v_min, 0.1)
+
+            # Grid lines
+            for i in range(6):
+                y = margin_t + int(gh * i / 5)
+                v = v_max - (v_range * i / 5)
+                canvas.create_line(margin_l, y, w - margin_r, y,
+                                   fill="#333", dash=(2, 4))
+                canvas.create_text(margin_l - 5, y, text=f"{v:.2f}V",
+                                   anchor="e", fill=C["dim"], font=self.ft_small)
+
+            # Time labels
+            for i in range(5):
+                x = margin_l + int(gw * i / 4)
+                t = t_start + (t_range * i / 4)
+                minutes_ago = (now - t) / 60
+                if minutes_ago < 1:
+                    label = "now"
+                else:
+                    label = f"-{int(minutes_ago)}m"
+                canvas.create_text(x, h - margin_b + 15, text=label,
+                                   fill=C["dim"], font=self.ft_small)
+
+            # Plot line
+            points = []
+            for t, v in data:
+                x = margin_l + int(gw * (t - t_start) / t_range)
+                y = margin_t + int(gh * (1.0 - (v - v_min) / v_range))
+                points.append((x, y))
+
+            if len(points) >= 2:
+                flat = [coord for p in points for coord in p]
+                canvas.create_line(*flat, fill="#44aaff", width=2, smooth=True)
+
+            # Current value
+            last_v = data[-1][1]
+            canvas.create_text(w - margin_r - 5, margin_t + 5,
+                               text=f"{last_v:.2f}V",
+                               anchor="ne", fill="#44aaff", font=self.ft_value)
+
+        canvas.bind("<Configure>", _draw)
+        top.after(100, _draw)
 
 
 if __name__ == "__main__":

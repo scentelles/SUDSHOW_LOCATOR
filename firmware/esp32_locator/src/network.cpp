@@ -50,7 +50,8 @@ String Network::getLocalIP() const {
 
 void Network::sendPosition(float x, float y, float quality,
                             float d1, float d2, float d3,
-                            bool sendDistances) {
+                            bool sendDistances,
+                            float batV) {
     if (!isConnected()) return;
 
     // Construire le JSON
@@ -60,6 +61,9 @@ void Network::sendPosition(float x, float y, float quality,
     doc["t"] = millis();
     doc["q"] = round(quality * 100.0f) / 100.0f;
     doc["n"] = _packetCount++;
+    if (batV >= 0.0f) {
+        doc["bat"] = round(batV * 100.0f) / 100.0f;
+    }
 
     if (sendDistances) {
         JsonArray dArr = doc["d"].to<JsonArray>();
@@ -144,15 +148,20 @@ bool Network::dashboardConnected() const {
     return (millis() - _lastDashboardHeartbeat) < 5000;
 }
 
-void Network::sendHeartbeat() {
+void Network::sendHeartbeat(float batV) {
     if (!isConnected()) return;
 
     uint32_t now = millis();
-    if (now - _lastHeartbeatSent < 2000) return;  // Toutes les 2 secondes
+    if (now - _lastHeartbeatSent < 2000) return;
     _lastHeartbeatSent = now;
 
-    // Envoyer un petit paquet heartbeat au dashboard
-    const char* hb = "{\"heartbeat\":1}";
+    // Heartbeat avec tension batterie
+    char hb[64];
+    if (batV >= 0.0f) {
+        snprintf(hb, sizeof(hb), "{\"heartbeat\":1,\"bat\":%.2f}", batV);
+    } else {
+        snprintf(hb, sizeof(hb), "{\"heartbeat\":1}");
+    }
     _udp.beginPacket(_targetIP, _targetPort);
     _udp.write((uint8_t*)hb, strlen(hb));
     _udp.endPacket();

@@ -58,8 +58,8 @@
 // =========================
 // Broches série pour la connexion au module BU-01 Tag.
 // Sur ESP32 : Serial2 utilise par défaut GPIO16 (RX) et GPIO17 (TX).
-#define UWB_SERIAL_RX       16
-#define UWB_SERIAL_TX       17
+#define UWB_SERIAL_RX       17
+#define UWB_SERIAL_TX       16
 #define UWB_BAUD_RATE       115200
 
 // =========================
@@ -107,4 +107,9 @@
   #define OLED_ADDR 0x3C
   #define SCREEN_WIDTH 128
   #define SCREEN_HEIGHT 64
+
+  // Batterie 18650 — GPIO32 (ADC1_CH4)
+  #define BAT_ADC_PIN     32
+  #define BAT_FULL_V      4.2f
+  #define BAT_EMPTY_V     3.0f
 #endif

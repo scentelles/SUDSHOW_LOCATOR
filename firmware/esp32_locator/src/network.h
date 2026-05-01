@@ -24,7 +24,8 @@ public:
     /// Format JSON : {"x":3.45, "y":2.10, "t":12345678, "q":0.95, "d":[1.2, 3.4, 2.1]}
     void sendPosition(float x, float y, float quality,
                       float d1, float d2, float d3,
-                      bool sendDistances = true);
+                      bool sendDistances = true,
+                      float batV = -1.0f);
 
     /// Tente de reconnecter le WiFi si déconnecté
     void maintainConnection();
@@ -33,7 +34,7 @@ public:
     void listenForConfig(uint16_t localPort, void (*onConfigReceived)(float, float, float, float));
 
     /// Envoie un heartbeat périodique au dashboard (toutes les 2s)
-    void sendHeartbeat();
+    void sendHeartbeat(float batV = -1.0f);
 
     /// Vérifie si le dashboard PC a envoyé un heartbeat récemment
     bool dashboardConnected() const;
