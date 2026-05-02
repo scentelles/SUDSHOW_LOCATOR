@@ -238,5 +238,6 @@
         "port": 30000,
         "user": "administrator",
         "pass": "admin"
-    }
+    },
+    "hide_anchors": true
 }

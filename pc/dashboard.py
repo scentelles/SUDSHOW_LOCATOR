@@ -186,6 +186,9 @@ class Dashboard:
                 pass
         data["fixtures"] = self.fixtures
         
+        if hasattr(self, 'var_hide_anchors'):
+            data["hide_anchors"] = self.var_hide_anchors.get()
+            
         data["tracking"] = self.cfg.get("tracking", {})
         data["tracking"]["target_height"] = round(self.target_z, 2)
         
@@ -264,13 +267,23 @@ class Dashboard:
         
 
 
-        # Bouton pour masquer/afficher le panneau droit
-        self.btn_toggle_panel = tk.Button(top, text="[>] Panneau", font=self.ft_label,
-                                          bg=C["border"], fg=C["text"], bd=0, padx=10,
+        # Boutons de toggle (Panneau & Logs) empilés à droite
+        toggle_frame = tk.Frame(top, bg=C["panel"])
+        toggle_frame.pack(side="right", padx=8)
+        
+        self.btn_toggle_panel = tk.Button(toggle_frame, text="[>] Panneau", font=("Segoe UI", 8, "bold"),
+                                          bg=C["border"], fg=C["text"], bd=0, width=12,
                                           activebackground=C["accent"], activeforeground="#000",
                                           cursor="hand2",
                                           command=self._toggle_right_panel)
-        self.btn_toggle_panel.pack(side="right", padx=8)
+        self.btn_toggle_panel.pack(side="top", pady=(0, 2))
+        
+        self.btn_toggle_log = tk.Button(toggle_frame, text="[+] Logs ESP32", font=("Segoe UI", 8, "bold"),
+                                          bg=C["border"], fg=C["text"], bd=0, width=12,
+                                          activebackground=C["accent"], activeforeground="#000",
+                                          cursor="hand2",
+                                          command=self._toggle_log_panel)
+        self.btn_toggle_log.pack(side="top")
 
 
 
@@ -336,11 +349,11 @@ class Dashboard:
         self.main_panes.add(self.right_panel, stretch="never")
 
         # --- Canvases ---
-        panes = tk.PanedWindow(left, orient="vertical", bg=C["border"], bd=0, sashwidth=4)
-        panes.pack(fill="both", expand=True)
+        self.left_panes = tk.PanedWindow(left, orient="vertical", bg=C["border"], bd=0, sashwidth=4)
+        self.left_panes.pack(fill="both", expand=True)
 
-        top_border = tk.Frame(panes, bg=C["border"], padx=2, pady=2)
-        panes.add(top_border, stretch="always")
+        top_border = tk.Frame(self.left_panes, bg=C["border"], padx=2, pady=2)
+        self.left_panes.add(top_border, stretch="always")
         self.canvas_top = tk.Canvas(top_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
         self.canvas_top.pack(fill="both", expand=True)
         self.canvas_top.bind("<Configure>", lambda e: self._draw())
@@ -348,8 +361,8 @@ class Dashboard:
         self.canvas_top.bind("<B1-Motion>", lambda e: self._on_drag(e, "top"))
         self.canvas_top.bind("<ButtonRelease-1>", self._on_release)
 
-        front_border = tk.Frame(panes, bg=C["border"], padx=2, pady=2)
-        panes.add(front_border, stretch="always")
+        front_border = tk.Frame(self.left_panes, bg=C["border"], padx=2, pady=2)
+        self.left_panes.add(front_border, stretch="always")
         self.canvas_front = tk.Canvas(front_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
         self.canvas_front.pack(fill="both", expand=True)
         self.canvas_front.bind("<Configure>", lambda e: self._draw())
@@ -357,15 +370,14 @@ class Dashboard:
         self.canvas_front.bind("<B1-Motion>", lambda e: self._on_drag(e, "front"))
         self.canvas_front.bind("<ButtonRelease-1>", self._on_release)
 
-        # --- Log frame (bottom of left) ---
-        log_frame = tk.Frame(left, bg=C["log_bg"], height=120)
-        log_frame.pack(fill="x", pady=(4, 0))
-        log_frame.pack_propagate(False)
+        # --- Log frame (bottom of left, initially hidden) ---
+        self.log_frame = tk.Frame(self.left_panes, bg=C["log_bg"], height=120)
+        self.log_frame.pack_propagate(False)
 
-        tk.Label(log_frame, text=" 📡 Messages ESP32", font=self.ft_label,
+        tk.Label(self.log_frame, text=" 📡 Messages ESP32", font=self.ft_label,
                  bg=C["log_bg"], fg=C["accent"], anchor="w").pack(fill="x")
 
-        self.log_text = tk.Text(log_frame, bg=C["log_bg"], fg=C["log_text"],
+        self.log_text = tk.Text(self.log_frame, bg=C["log_bg"], fg=C["log_text"],
                                  font=self.ft_log, wrap="none", bd=0,
                                  highlightthickness=0, state="disabled",
                                  height=6)
@@ -440,6 +452,14 @@ class Dashboard:
             l = tk.Label(f, text="—", font=self.ft_value, bg=C["panel"], fg=C["text"])
             l.pack(side="left", padx=4)
             self.dlbls.append(l)
+
+        # Masquer Anchors
+        self.var_hide_anchors = tk.BooleanVar(value=self.cfg.get("hide_anchors", False))
+        cb_hide_anchors = tk.Checkbutton(parent, text="Masquer les Anchors", variable=self.var_hide_anchors,
+                                         font=self.ft_small, bg=C["panel"], fg=C["text"],
+                                         selectcolor=C["bg"], activebackground=C["panel"], activeforeground=C["text"],
+                                         command=self._draw)
+        cb_hide_anchors.pack(anchor="w", padx=8, pady=(4, 0))
 
         # Fixtures
         self._section(parent, "💡 FIXTURES (Pan/Tilt)")
@@ -677,6 +697,14 @@ class Dashboard:
             self.main_panes.add(self.right_panel, stretch="never")
             self.btn_toggle_panel.config(text="[>] Panneau")
 
+    def _toggle_log_panel(self):
+        if str(self.log_frame) in [str(p) for p in self.left_panes.panes()]:
+            self.left_panes.forget(self.log_frame)
+            self.btn_toggle_log.config(text="[+] Logs ESP32")
+        else:
+            self.left_panes.add(self.log_frame, stretch="never")
+            self.btn_toggle_log.config(text="[-] Logs ESP32")
+
     def _toggle_group(self, grp):
         self.group_toggles[grp] = not self.group_toggles[grp]
         self._update_group_btn_color(grp)
@@ -848,7 +876,8 @@ class Dashboard:
                 cv.create_line(fxp, fyp, txp, typ, fill=C["fixture"], width=1, dash=(6, 4))
 
         # Distance lines from anchors
-        if self.connected and view == "top":
+        hide_a = getattr(self, 'var_hide_anchors', None) and self.var_hide_anchors.get()
+        if self.connected and view == "top" and not hide_a:
             tx, ty = get_tag_pos()
             txp, typ, _ = s2p(tx, ty)
             for i, a in enumerate(self.anchors):
@@ -891,15 +920,16 @@ class Dashboard:
             cv.create_text(fxp, fyp + 20, text=f"({fxx:.1f},{fxy_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
         # Anchors
-        for i, a in enumerate(self.anchors):
-            ax, ay_z = (a[0], a[1]) if view == "top" else (a[0], a[2])
-            apx, apy, _ = s2p(ax, ay_z)
-            r1 = 18
-            cv.create_oval(apx - r1, apy - r1, apx + r1, apy + r1, outline=C["anchor_bg"], width=2)
-            r2 = 9
-            cv.create_oval(apx - r2, apy - r2, apx + r2, apy + r2, fill=C["anchor"], outline="")
-            cv.create_text(apx, apy - 24, text=f"A{i}", fill=C["anchor"], font=("Segoe UI", 10, "bold"))
-            cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay_z:.1f})", fill=C["dim"], font=("Consolas", 7))
+        if not hide_a:
+            for i, a in enumerate(self.anchors):
+                ax, ay_z = (a[0], a[1]) if view == "top" else (a[0], a[2])
+                apx, apy, _ = s2p(ax, ay_z)
+                r1 = 18
+                cv.create_oval(apx - r1, apy - r1, apx + r1, apy + r1, outline=C["anchor_bg"], width=2)
+                r2 = 9
+                cv.create_oval(apx - r2, apy - r2, apx + r2, apy + r2, fill=C["anchor"], outline="")
+                cv.create_text(apx, apy - 24, text=f"A{i}", fill=C["anchor"], font=("Segoe UI", 10, "bold"))
+                cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
         # Tag
         if self.connected:
