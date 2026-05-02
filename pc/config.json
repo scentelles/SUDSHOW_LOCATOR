@@ -8,18 +8,18 @@
     },
     "anchors": {
         "a0": {
-            "x": 9.3,
-            "y": 0.4,
-            "z": 0.58
+            "x": 3.2,
+            "y": 4.5,
+            "z": 1.7
         },
         "a1": {
-            "x": 1.0,
-            "y": 0.43,
-            "z": 0.47
+            "x": 6.4,
+            "y": 4.4,
+            "z": 1.7
         },
         "a2": {
-            "x": 6.14,
-            "y": 4.57,
+            "x": 4.7,
+            "y": 0.1,
             "z": 0.88
         }
     },
@@ -155,12 +155,12 @@
             "y": 2.3,
             "height": 0.3,
             "gma_id": 205,
-            "pan_min": 0.0,
-            "pan_max": 540.0,
-            "pan_offset": 0.0,
-            "pan_invert": false,
-            "tilt_min": -95.0,
-            "tilt_max": 95.0,
+            "pan_min": -270.0,
+            "pan_max": 270.0,
+            "pan_offset": -270.0,
+            "pan_invert": true,
+            "tilt_min": -135.0,
+            "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false
         },
@@ -171,14 +171,46 @@
             "y": 2.3,
             "height": 0.3,
             "gma_id": 206,
-            "pan_min": 0.0,
-            "pan_max": 540.0,
-            "pan_offset": 0.0,
-            "pan_invert": false,
-            "tilt_min": -95.0,
-            "tilt_max": 95.0,
+            "pan_min": -270.0,
+            "pan_max": 270.0,
+            "pan_offset": -270.0,
+            "pan_invert": true,
+            "tilt_min": -135.0,
+            "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false
+        },
+        {
+            "name": "Lyre 9",
+            "group": 3,
+            "x": 0.3,
+            "y": 0.2,
+            "height": 0.4,
+            "gma_id": 201,
+            "pan_min": -270.0,
+            "pan_max": 270.0,
+            "pan_offset": -90.0,
+            "pan_invert": true,
+            "tilt_min": -95.0,
+            "tilt_max": 95.0,
+            "tilt_offset": -90.0,
+            "tilt_invert": true
+        },
+        {
+            "name": "Lyre 10",
+            "group": 3,
+            "x": 9.7,
+            "y": 0.3,
+            "height": 0.2,
+            "gma_id": 203,
+            "pan_min": -270.0,
+            "pan_max": 270.0,
+            "pan_offset": -90.0,
+            "pan_invert": true,
+            "tilt_min": -95.0,
+            "tilt_max": 95.0,
+            "tilt_offset": -90.0,
+            "tilt_invert": true
         }
     ],
     "network": {
@@ -192,7 +224,7 @@
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
-        "target_height": 1.9
+        "target_height": 1.3
     },
     "calibration": {
         "a0": 0.7,
