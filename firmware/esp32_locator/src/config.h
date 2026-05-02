@@ -9,15 +9,15 @@
 // =========================
 //   RÉSEAU WiFi
 // =========================
-#define WIFI_SSID           "Wifi_Home"
-#define WIFI_PASS           "060877040178"
+#define WIFI_SSID           "slyzic-hotspot"
+#define WIFI_PASS           "totototo"
 
 // =========================
 //   UDP — Envoi position
 // =========================
 // IP du PC qui exécute le script Python.
 // Utilisez "255.255.255.255" pour broadcast sur tout le réseau.
-#define UDP_TARGET_IP       "192.168.1.41"
+#define UDP_TARGET_IP       "10.3.141.20"
 #define UDP_TARGET_PORT     9000
 
 // =========================
