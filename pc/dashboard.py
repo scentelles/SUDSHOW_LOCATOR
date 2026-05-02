@@ -147,6 +147,7 @@ class Dashboard:
         self._start_udp()
         self._start_telnet()
         self._start_heartbeat()
+        self._start_remote_listener()
         self._tick()
 
     def _load_config(self):
@@ -1342,6 +1343,65 @@ class Dashboard:
             except Exception:
                 pass
             time.sleep(2.0)
+
+    def _start_remote_listener(self):
+        t = threading.Thread(target=self._listen_remote_commands, daemon=True)
+        t.start()
+
+    def _listen_remote_commands(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        port = 5005
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError as e:
+            self._log(f"[NET] ⚠ Erreur accès port {port}: {e}")
+            port = 9005
+            try:
+                sock.bind(("0.0.0.0", port))
+            except Exception as e2:
+                self._log(f"[NET] ✗ Impossible d'écouter la télécommande: {e2}")
+                return
+                
+        self._log(f"[NET] Écoute UDP télécommande sur port {port}")
+        while True:
+            try:
+                data, addr = sock.recvfrom(1024)
+                msg = data.decode("utf-8").strip()
+                if msg == "SHOW_WINDOW":
+                    self.root.after(0, self._toggle_window_state)
+                elif msg == "HIDE_WINDOW":
+                    self.root.after(0, self._hide_window)
+            except Exception:
+                pass
+
+    def _toggle_window_state(self):
+        try:
+            # Si la fenêtre est normale (pas réduite) ET qu'elle a le focus actif
+            if self.root.state() == 'normal' and self.root.focus_displayof():
+                self._hide_window()
+            else:
+                self._bring_to_front()
+        except Exception:
+            pass
+
+    def _bring_to_front(self):
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.attributes("-topmost", False)
+            self.root.focus_force()
+            self._log("[UI] Fenêtre ramenée au premier plan via UDP")
+        except Exception:
+            pass
+
+    def _hide_window(self):
+        try:
+            self.root.iconify()
+            self._log("[UI] Fenêtre réduite via UDP")
+        except Exception:
+            pass
 
     def _udp_loop(self, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
