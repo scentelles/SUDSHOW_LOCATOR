@@ -2,33 +2,34 @@
     "_comment": "SudShow Locator — Configuration PC",
     "_units": "Toutes les distances en mètres, angles en degrés",
     "stage": {
-        "width": 7.0,
-        "depth": 3.5
+        "width": 10.0,
+        "depth": 5.0,
+        "height": 3.5
     },
     "anchors": {
         "a0": {
-            "x": 6.4,
-            "y": 0.2,
-            "z": 0.5
+            "x": 9.3,
+            "y": 0.4,
+            "z": 0.58
         },
         "a1": {
-            "x": 0.8,
-            "y": 0.3,
-            "z": 1.2
+            "x": 1.0,
+            "y": 0.43,
+            "z": 0.47
         },
         "a2": {
-            "x": 4.3,
-            "y": 3.2,
-            "z": 1.5
+            "x": 6.14,
+            "y": 4.57,
+            "z": 0.88
         }
     },
     "fixtures": [
         {
             "id": 1,
             "name": "Lyre 1",
-            "x": 1.4,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 2.0,
+            "y": 4.29,
+            "height": 3.15,
             "gma_fixture_id": 1,
             "pan_range_deg": 540,
             "tilt_range_deg": 270,
@@ -43,14 +44,15 @@
             "pan_offset": 0.0,
             "tilt_min": -95.0,
             "tilt_max": 95.0,
-            "tilt_offset": 90.0
+            "tilt_offset": 90.0,
+            "group": 1
         },
         {
             "id": 2,
             "name": "Lyre 2",
-            "x": 2.24,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 3.14,
+            "y": 4.29,
+            "height": 3.15,
             "gma_fixture_id": 2,
             "pan_range_deg": 540,
             "tilt_range_deg": 270,
@@ -65,14 +67,15 @@
             "pan_offset": 0.0,
             "tilt_min": -95.0,
             "tilt_max": 95.0,
-            "tilt_offset": 90.0
+            "tilt_offset": 90.0,
+            "group": 1
         },
         {
             "id": 3,
             "name": "Lyre 3",
-            "x": 3.08,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 4.43,
+            "y": 4.29,
+            "height": 3.15,
             "gma_fixture_id": 3,
             "pan_range_deg": 540,
             "tilt_range_deg": 270,
@@ -87,14 +90,15 @@
             "pan_offset": 0.0,
             "tilt_min": -95.0,
             "tilt_max": 95.0,
-            "tilt_offset": 90.0
+            "tilt_offset": 90.0,
+            "group": 1
         },
         {
             "id": 4,
             "name": "Lyre 4",
-            "x": 3.9,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 5.57,
+            "y": 4.29,
+            "height": 3.15,
             "gma_fixture_id": 4,
             "pan_range_deg": 540,
             "tilt_range_deg": 270,
@@ -109,13 +113,14 @@
             "pan_offset": 0.0,
             "tilt_min": -95.0,
             "tilt_max": 95.0,
-            "tilt_offset": 90.0
+            "tilt_offset": 90.0,
+            "group": 1
         },
         {
             "name": "Lyre 5",
-            "x": 4.7,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 6.71,
+            "y": 4.29,
+            "height": 3.15,
             "gma_id": 305,
             "pan_min": 0.0,
             "pan_max": 540.0,
@@ -124,13 +129,14 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "tilt_invert": true
+            "tilt_invert": true,
+            "group": 1
         },
         {
             "name": "Lyre 6",
-            "x": 5.4,
-            "y": 3.0,
-            "height": 2.5,
+            "x": 7.57,
+            "y": 4.29,
+            "height": 3.15,
             "gma_id": 306,
             "pan_min": 0.0,
             "pan_max": 540.0,
@@ -139,7 +145,40 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "tilt_invert": true
+            "tilt_invert": true,
+            "group": 1
+        },
+        {
+            "name": "Lyre 7",
+            "group": 2,
+            "x": 3.3,
+            "y": 2.3,
+            "height": 0.3,
+            "gma_id": 205,
+            "pan_min": 0.0,
+            "pan_max": 540.0,
+            "pan_offset": 0.0,
+            "pan_invert": false,
+            "tilt_min": -95.0,
+            "tilt_max": 95.0,
+            "tilt_offset": 90.0,
+            "tilt_invert": false
+        },
+        {
+            "name": "Lyre 8",
+            "group": 2,
+            "x": 6.2,
+            "y": 2.3,
+            "height": 0.3,
+            "gma_id": 206,
+            "pan_min": 0.0,
+            "pan_max": 540.0,
+            "pan_offset": 0.0,
+            "pan_invert": false,
+            "tilt_min": -95.0,
+            "tilt_max": 95.0,
+            "tilt_offset": 90.0,
+            "tilt_invert": false
         }
     ],
     "network": {
@@ -153,7 +192,7 @@
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
-        "target_height": 1.5
+        "target_height": 1.9
     },
     "calibration": {
         "a0": 0.7,

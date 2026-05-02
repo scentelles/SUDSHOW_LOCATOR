@@ -62,6 +62,8 @@ class Dashboard:
         self.cfg = self._load_config()
         self.stage_w = self.cfg.get("stage", {}).get("width", 10.0)
         self.stage_d = self.cfg.get("stage", {}).get("depth", 5.0)
+        self.stage_h = self.cfg.get("stage", {}).get("height", 3.0)
+        self.target_z = self.cfg.get("tracking", {}).get("target_height", 1.7)
 
         # Anchors [(x,y,z), ...]
         acfg = self.cfg.get("anchors", {})
@@ -125,8 +127,10 @@ class Dashboard:
         self.ft_value = tkfont.Font(family="Consolas", size=11, weight="bold")
         self.ft_small = tkfont.Font(family="Consolas", size=9)
         self.ft_log = tkfont.Font(family="Consolas", size=8)
+        self.ft_large_btn = tkfont.Font(family="Segoe UI", size=14, weight="bold")
         
         self.test_mode = tk.BooleanVar(value=False)
+        self.group_toggles = {i: True for i in range(1, 6)}
 
         # Telnet MA2 state
         self.ma2_socket = None
@@ -162,7 +166,7 @@ class Dashboard:
             data = {}
 
         # Mettre à jour les champs gérés par le dashboard
-        data["stage"] = {"width": self.stage_w, "depth": self.stage_d}
+        data["stage"] = {"width": self.stage_w, "depth": self.stage_d, "height": self.stage_h}
         data["anchors"] = {
             f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2), "z": round(a[2], 2)}
             for i, a in enumerate(self.anchors)
@@ -175,15 +179,15 @@ class Dashboard:
                 fx["gma_id"] = int(self.fx_ma2_entries[i].get())
             except:
                 pass
+            try:
+                if hasattr(self, 'fx_grp_entries') and i < len(self.fx_grp_entries):
+                    fx["group"] = max(1, min(5, int(self.fx_grp_entries[i].get())))
+            except:
+                pass
         data["fixtures"] = self.fixtures
         
-        try:
-            th = float(self.ent_cible_z.get())
-        except:
-            th = 1.7
-            
         data["tracking"] = self.cfg.get("tracking", {})
-        data["tracking"]["target_height"] = th
+        data["tracking"]["target_height"] = round(self.target_z, 2)
         
         data["calibration"] = self.cfg.get("calibration", {"a0": 0.8, "a1": 0.8, "a2": 0.8, "alpha": 0.85, "tag_z": 1.0})
         
@@ -215,6 +219,7 @@ class Dashboard:
         for i in range(n):
             fxs.append({
                 "name": f"Lyre {i+1}",
+                "group": 1,
                 "x": start_x + i * spacing,
                 "y": self.stage_d - 0.5,
                 "height": 4.0,
@@ -242,99 +247,115 @@ class Dashboard:
                  bg=C["panel"], fg=C["accent"]).pack(side="left")
 
         # Bouton MA2 dans la top bar
-        self.btn_ma2_top = tk.Button(top, text="🎬 MA2", font=self.ft_label,
-                                     bg="#aa6600", fg="#fff", bd=0, padx=12, pady=2,
+        self.btn_ma2_top = tk.Button(top, text="🎬 MA2", font=self.ft_large_btn,
+                                     bg="#aa6600", fg="#fff", bd=0, padx=16, pady=4,
                                      activebackground="#cc8800", activeforeground="#fff",
                                      cursor="hand2",
                                      command=self._toggle_ma2)
         self.btn_ma2_top.pack(side="left", padx=(16, 0))
 
         # Bouton Manual mode dans la top bar
-        self.btn_manual = tk.Button(top, text="✋ Manual", font=self.ft_label,
-                                    bg="#555555", fg="#ccc", bd=0, padx=12, pady=2,
+        self.btn_manual = tk.Button(top, text="✋ Manual", font=self.ft_large_btn,
+                                    bg="#555555", fg="#ccc", bd=0, padx=16, pady=4,
                                     activebackground="#777777", activeforeground="#fff",
                                     cursor="hand2",
                                     command=self._toggle_manual)
         self.btn_manual.pack(side="left", padx=(8, 0))
+        
 
-        self.lbl_status = tk.Label(top, text="⏳ En attente...",
-                                    font=self.ft_label, bg=C["panel"], fg=C["dim"])
-        self.lbl_status.pack(side="right", padx=8)
 
-        # ESP32 connection indicator
-        self.lbl_esp32 = tk.Label(top, text="📡 ESP32: --",
-                                   font=self.ft_label, bg=C["panel"], fg=C["dim"])
-        self.lbl_esp32.pack(side="right", padx=8)
+        # Bouton pour masquer/afficher le panneau droit
+        self.btn_toggle_panel = tk.Button(top, text="[>] Panneau", font=self.ft_label,
+                                          bg=C["border"], fg=C["text"], bd=0, padx=10,
+                                          activebackground=C["accent"], activeforeground="#000",
+                                          cursor="hand2",
+                                          command=self._toggle_right_panel)
+        self.btn_toggle_panel.pack(side="right", padx=8)
 
-        self.lbl_rate = tk.Label(top, text="", font=self.ft_label,
-                                  bg=C["panel"], fg=C["dim"])
-        self.lbl_rate.pack(side="right", padx=8)
+
+
+        # Frame pour les boutons de groupes alignés à droite
+        grp_frame = tk.Frame(top, bg=C["panel"])
+        grp_frame.pack(side="right", padx=(16, 8))
+        
+        # Boutons de groupes G1-G5
+        self.btn_groups = {}
+        for i in range(1, 6):
+            btn = tk.Button(grp_frame, text=f"G{i}", font=self.ft_large_btn,
+                            bd=0, padx=16, pady=4, cursor="hand2",
+                            command=lambda grp=i: self._toggle_group(grp))
+            btn.pack(side="left", padx=(0, 4) if i < 5 else 0)
+            self.btn_groups[i] = btn
+            self._update_group_btn_color(i)
+
+        # --- Bandeau du bas ---
+        bot = tk.Frame(self.root, bg=C["panel"], pady=2, padx=12)
+        bot.pack(side="bottom", fill="x")
+        
+        # Qualité (tout à droite)
+        q_frame = tk.Frame(bot, bg=C["panel"])
+        q_frame.pack(side="right", padx=8)
+        tk.Label(q_frame, text="Qualité :", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.qbar = tk.Canvas(q_frame, width=40, height=10, bg=C["canvas_bg"], highlightthickness=0)
+        self.qbar.pack(side="left", padx=(4, 0))
+        self.lbl_q = tk.Label(q_frame, text="—", font=self.ft_small, bg=C["panel"], fg=C["dim"], width=4, anchor="w")
+        self.lbl_q.pack(side="left", padx=(4, 0))
 
         # Battery voltage label (clickable)
-        self.lbl_bat = tk.Label(top, text="🔋 --", font=self.ft_label,
+        self.lbl_bat = tk.Label(bot, text="🔋 --", font=self.ft_label,
                                 bg=C["panel"], fg=C["dim"], cursor="hand2")
         self.lbl_bat.pack(side="right", padx=8)
         self.lbl_bat.bind("<Button-1>", lambda e: self._show_bat_history())
 
-        # Stage size
-        sz_frame = tk.Frame(top, bg=C["panel"])
-        sz_frame.pack(side="right", padx=16)
-        tk.Label(sz_frame, text="Scène:", font=self.ft_label,
-                 bg=C["panel"], fg=C["dim"]).pack(side="left")
+        # Rate
+        self.lbl_rate = tk.Label(bot, text="", font=self.ft_label,
+                                  bg=C["panel"], fg=C["dim"])
+        self.lbl_rate.pack(side="right", padx=8)
 
-        self.entry_w = tk.Entry(sz_frame, width=5, font=self.ft_small,
-                                 bg=C["canvas_bg"], fg=C["text"],
-                                 insertbackground=C["text"],
-                                 bd=1, relief="flat")
-        self.entry_w.insert(0, str(self.stage_w))
-        self.entry_w.pack(side="left", padx=2)
-        tk.Label(sz_frame, text="×", font=self.ft_label,
-                 bg=C["panel"], fg=C["dim"]).pack(side="left")
-        self.entry_d = tk.Entry(sz_frame, width=5, font=self.ft_small,
-                                 bg=C["canvas_bg"], fg=C["text"],
-                                 insertbackground=C["text"],
-                                 bd=1, relief="flat")
-        self.entry_d.insert(0, str(self.stage_d))
-        self.entry_d.pack(side="left", padx=2)
-        tk.Label(sz_frame, text="m", font=self.ft_label,
-                 bg=C["panel"], fg=C["dim"]).pack(side="left")
+        # ESP32 connection indicator
+        self.lbl_esp32 = tk.Label(bot, text="📡 ESP32: --",
+                                   font=self.ft_label, bg=C["panel"], fg=C["dim"])
+        self.lbl_esp32.pack(side="right", padx=8)
 
-        btn_apply = tk.Button(sz_frame, text="Appliquer", font=self.ft_label,
-                               bg=C["border"], fg=C["text"], bd=0, padx=8,
-                               activebackground=C["accent"], activeforeground="#000",
-                               command=self._apply_stage_size)
-        btn_apply.pack(side="left", padx=6)
-
-        btn_save = tk.Button(top, text="💾 Sauvegarder", font=self.ft_label,
-                              bg=C["border"], fg=C["ok"], bd=0, padx=10,
-                              activebackground=C["ok"], activeforeground="#000",
-                              command=self._save_config)
-        btn_save.pack(side="right", padx=8)
+        # Status
+        self.lbl_status = tk.Label(bot, text="⏳ En attente...",
+                                    font=self.ft_label, bg=C["panel"], fg=C["dim"])
+        self.lbl_status.pack(side="right", padx=8)
 
         # --- Main: left canvas + right panel ---
-        main = tk.PanedWindow(self.root, orient="horizontal",
+        self.main_panes = tk.PanedWindow(self.root, orient="horizontal",
                                bg=C["bg"], bd=0, sashwidth=4)
-        main.pack(fill="both", expand=True, padx=4, pady=4)
+        self.main_panes.pack(fill="both", expand=True, padx=4, pady=4)
 
         # Canvas frame
-        left = tk.Frame(main, bg=C["bg"])
-        main.add(left, stretch="always")
+        left = tk.Frame(self.main_panes, bg=C["bg"])
+        self.main_panes.add(left, stretch="always")
 
         # Right panel
-        right = tk.Frame(main, bg=C["panel"], width=280)
-        main.add(right, stretch="never")
+        self.right_panel = tk.Frame(self.main_panes, bg=C["panel"], width=280)
+        self.main_panes.add(self.right_panel, stretch="never")
 
-        # --- Canvas ---
-        canvas_border = tk.Frame(left, bg=C["border"], padx=2, pady=2)
-        canvas_border.pack(fill="both", expand=True)
+        # --- Canvases ---
+        panes = tk.PanedWindow(left, orient="vertical", bg=C["border"], bd=0, sashwidth=4)
+        panes.pack(fill="both", expand=True)
 
-        self.canvas = tk.Canvas(canvas_border, bg=C["canvas_bg"],
-                                 highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda e: self._draw())
-        self.canvas.bind("<ButtonPress-1>", self._on_press)
-        self.canvas.bind("<B1-Motion>", self._on_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._on_release)
+        top_border = tk.Frame(panes, bg=C["border"], padx=2, pady=2)
+        panes.add(top_border, stretch="always")
+        self.canvas_top = tk.Canvas(top_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
+        self.canvas_top.pack(fill="both", expand=True)
+        self.canvas_top.bind("<Configure>", lambda e: self._draw())
+        self.canvas_top.bind("<ButtonPress-1>", lambda e: self._on_press(e, "top"))
+        self.canvas_top.bind("<B1-Motion>", lambda e: self._on_drag(e, "top"))
+        self.canvas_top.bind("<ButtonRelease-1>", self._on_release)
+
+        front_border = tk.Frame(panes, bg=C["border"], padx=2, pady=2)
+        panes.add(front_border, stretch="always")
+        self.canvas_front = tk.Canvas(front_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
+        self.canvas_front.pack(fill="both", expand=True)
+        self.canvas_front.bind("<Configure>", lambda e: self._draw())
+        self.canvas_front.bind("<ButtonPress-1>", lambda e: self._on_press(e, "front"))
+        self.canvas_front.bind("<B1-Motion>", lambda e: self._on_drag(e, "front"))
+        self.canvas_front.bind("<ButtonRelease-1>", self._on_release)
 
         # --- Log frame (bottom of left) ---
         log_frame = tk.Frame(left, bg=C["log_bg"], height=120)
@@ -351,10 +372,48 @@ class Dashboard:
         self.log_text.pack(fill="both", expand=True, padx=4, pady=2)
 
         # --- Right panel content ---
-        self._build_panel(right)
+        self._build_panel(self.right_panel)
 
     def _build_panel(self, parent):
         parent.columnconfigure(0, weight=1)
+
+        # Stage size & Save (Moved from Top Bar)
+        self._section(parent, "📐 SCÈNE & SAUVEGARDE")
+        sz_frame = tk.Frame(parent, bg=C["panel"])
+        sz_frame.pack(fill="x", padx=8, pady=2)
+        
+        # Row 1: Dimensions
+        f_dim = tk.Frame(sz_frame, bg=C["panel"])
+        f_dim.pack(fill="x", pady=2)
+        tk.Label(f_dim, text="W:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+        self.entry_w = tk.Entry(f_dim, width=4, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1, relief="flat")
+        self.entry_w.insert(0, str(self.stage_w))
+        self.entry_w.pack(side="left", padx=1)
+        
+        tk.Label(f_dim, text="D:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left", padx=(4,0))
+        self.entry_d = tk.Entry(f_dim, width=4, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1, relief="flat")
+        self.entry_d.insert(0, str(self.stage_d))
+        self.entry_d.pack(side="left", padx=1)
+        
+        tk.Label(f_dim, text="H:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left", padx=(4,0))
+        self.entry_h = tk.Entry(f_dim, width=4, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1, relief="flat")
+        self.entry_h.insert(0, str(self.stage_h))
+        self.entry_h.pack(side="left", padx=1)
+
+        # Row 2: Buttons
+        f_btns = tk.Frame(sz_frame, bg=C["panel"])
+        f_btns.pack(fill="x", pady=4)
+        btn_apply = tk.Button(f_btns, text="Appliquer", font=self.ft_label,
+                               bg=C["border"], fg=C["text"], bd=0, padx=8,
+                               activebackground=C["accent"], activeforeground="#000",
+                               command=self._apply_stage_size)
+        btn_apply.pack(side="left", fill="x", expand=True, padx=(0, 2))
+        
+        btn_save = tk.Button(f_btns, text="💾 Sauver", font=self.ft_label,
+                              bg=C["border"], fg=C["ok"], bd=0, padx=8,
+                              activebackground=C["ok"], activeforeground="#000",
+                              command=self._save_config)
+        btn_save.pack(side="left", fill="x", expand=True, padx=(2, 0))
 
         # Position
         self._section(parent, "📍 POSITION")
@@ -363,9 +422,12 @@ class Dashboard:
         tk.Label(pf, text="X:", font=self.ft_label, bg=C["panel"], fg=C["dim"]).grid(row=0, column=0)
         self.lbl_x = tk.Label(pf, text="—", font=self.ft_value, bg=C["panel"], fg=C["text"])
         self.lbl_x.grid(row=0, column=1, sticky="w", padx=4)
-        tk.Label(pf, text="Y:", font=self.ft_label, bg=C["panel"], fg=C["dim"]).grid(row=0, column=2, padx=(12, 0))
+        tk.Label(pf, text="Y:", font=self.ft_label, bg=C["panel"], fg=C["dim"]).grid(row=0, column=2, padx=(8, 0))
         self.lbl_y = tk.Label(pf, text="—", font=self.ft_value, bg=C["panel"], fg=C["text"])
         self.lbl_y.grid(row=0, column=3, sticky="w", padx=4)
+        tk.Label(pf, text="Z:", font=self.ft_label, bg=C["panel"], fg=C["dim"]).grid(row=0, column=4, padx=(8, 0))
+        self.lbl_z = tk.Label(pf, text="—", font=self.ft_value, bg=C["panel"], fg=C["text"])
+        self.lbl_z.grid(row=0, column=5, sticky="w", padx=4)
 
         # Distances
         self._section(parent, "📏 DISTANCES")
@@ -379,13 +441,6 @@ class Dashboard:
             l.pack(side="left", padx=4)
             self.dlbls.append(l)
 
-        # Quality
-        self._section(parent, "📊 QUALITÉ")
-        self.qbar = tk.Canvas(parent, height=16, bg=C["canvas_bg"], highlightthickness=0)
-        self.qbar.pack(fill="x", padx=8, pady=(0, 2))
-        self.lbl_q = tk.Label(parent, text="—", font=self.ft_small, bg=C["panel"], fg=C["dim"])
-        self.lbl_q.pack(anchor="w", padx=8)
-
         # Fixtures
         self._section(parent, "💡 FIXTURES (Pan/Tilt)")
         self.frm_fixtures = tk.Frame(parent, bg=C["panel"])
@@ -395,14 +450,7 @@ class Dashboard:
         btn_add_fx = tk.Button(parent, text="[+] Ajouter Lyre", font=("Segoe UI", 8), bg=C["border"], fg=C["text"], bd=0, command=self._add_fixture)
         btn_add_fx.pack(pady=(2, 8))
 
-        fh = tk.Frame(parent, bg=C["panel"])
-        fh.pack(fill="x", padx=8, pady=(4, 0))
-        tk.Label(fh, text="Cible Z:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
-        self.ent_cible_z = tk.Entry(fh, width=5, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
-        th_val = self.cfg.get("tracking", {}).get("target_height", 1.7)
-        self.ent_cible_z.insert(0, str(th_val))
-        self.ent_cible_z.pack(side="left", padx=4)
-        tk.Label(fh, text="m (Visage à éclairer)", font=("Segoe UI", 7), bg=C["panel"], fg=C["dim"]).pack(side="left")
+        # Cible Z est maintenant ajustable via la vue de face
 
         # Calibration
         self._section(parent, "🔧 CALIBRATION UWB")
@@ -501,7 +549,7 @@ class Dashboard:
         top = tk.Toplevel(self.root)
         top.title(f"⚙️ {fx['name']}")
         top.configure(bg=C["bg"])
-        top.geometry("280x380")
+        top.geometry("280x420")
         top.transient(self.root)
         top.grab_set()
 
@@ -535,6 +583,8 @@ class Dashboard:
         e_toff = _row(top, "Tilt Offset (°)", "tilt_offset", 90.0)
         v_tinv = _check(top, "Inverser Tilt", "tilt_invert", False)
         
+        e_grp = _row(top, "Groupe (1-5)", "group", 1)
+        
         def _save():
             try:
                 fx["height"] = float(e_h.get())
@@ -546,6 +596,7 @@ class Dashboard:
                 fx["tilt_max"] = float(e_tmax.get())
                 fx["tilt_offset"] = float(e_toff.get())
                 fx["tilt_invert"] = v_tinv.get()
+                fx["group"] = max(1, min(5, int(e_grp.get())))
                 self._save_config()
                 self._draw()
                 top.destroy()
@@ -560,6 +611,7 @@ class Dashboard:
             
         self.fx_labels = []
         self.fx_ma2_entries = []
+        self.fx_grp_entries = []
         
         for i, fx in enumerate(self.fixtures):
             f = tk.Frame(self.frm_fixtures, bg=C["panel"])
@@ -579,6 +631,13 @@ class Dashboard:
             ent_id.insert(0, str(fx.get("gma_id", i+1)))
             ent_id.pack(side="left", padx=4)
             self.fx_ma2_entries.append(ent_id)
+            
+            # Group entry
+            tk.Label(f, text=" G:", font=self.ft_small, bg=C["panel"], fg=C["dim"]).pack(side="left")
+            ent_grp = tk.Entry(f, width=2, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"], bd=1)
+            ent_grp.insert(0, str(fx.get("group", 1)))
+            ent_grp.pack(side="left", padx=4)
+            self.fx_grp_entries.append(ent_grp)
             
             tk.Label(f, text=f"{fx['name']}:", font=self.ft_small,
                      bg=C["panel"], fg=C["fixture"]).pack(side="left")
@@ -610,205 +669,266 @@ class Dashboard:
         tk.Label(parent, text=text, font=self.ft_section,
                  bg=C["panel"], fg=C["accent"]).pack(anchor="w", padx=8)
 
+    def _toggle_right_panel(self):
+        if str(self.right_panel) in [str(p) for p in self.main_panes.panes()]:
+            self.main_panes.forget(self.right_panel)
+            self.btn_toggle_panel.config(text="[<] Panneau")
+        else:
+            self.main_panes.add(self.right_panel, stretch="never")
+            self.btn_toggle_panel.config(text="[>] Panneau")
+
+    def _toggle_group(self, grp):
+        self.group_toggles[grp] = not self.group_toggles[grp]
+        self._update_group_btn_color(grp)
+        self._draw()
+
+    def _update_group_btn_color(self, grp):
+        btn = self.btn_groups[grp]
+        if self.group_toggles[grp]:
+            col = self._get_group_color(grp)
+            btn.config(bg=col, activebackground=col, fg="#000")
+        else:
+            btn.config(bg="#2a2a5a", activebackground="#4a4a8a", fg="#888")
+
     # =========================================================================
     # COORDINATE CONVERSION
     # =========================================================================
     def _margins(self):
         return 55, 40, 55, 50   # left, top, right, bottom
 
-    def _stage2px(self, sx, sy):
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
+    def _get_group_color(self, grp):
+        colors = {
+            1: "#ff5555", # Rouge
+            2: "#55ff55", # Vert
+            3: "#5555ff", # Bleu
+            4: "#ffff55", # Jaune
+            5: "#ff55ff"  # Magenta
+        }
+        return colors.get(grp, C["fixture"])
+
+    def _get_global_scale_ox(self):
+        # Align X dimension for both views
+        if not hasattr(self, 'canvas_top') or not hasattr(self, 'canvas_front'):
+            return 1.0, 0.0
+            
+        cw = self.canvas_top.winfo_width()
+        ch_top = self.canvas_top.winfo_height()
+        ch_front = self.canvas_front.winfo_height()
+        
         ml, mt, mr, mb = self._margins()
         dw = cw - ml - mr
-        dh = ch - mt - mb
+        dh_top = max(1, ch_top - mt - mb)
+        dh_front = max(1, ch_front - mt - mb)
+        
         scx = dw / max(self.stage_w, 0.5)
-        scy = dh / max(self.stage_d, 0.5)
-        scale = min(scx, scy)
+        scy_top = dh_top / max(self.stage_d, 0.5)
+        scy_front = dh_front / max(self.stage_h, 0.5)
+        
+        scale = min(scx, scy_top, scy_front)
         ox = ml + (dw - self.stage_w * scale) / 2
-        oy = mt + (dh - self.stage_d * scale) / 2
+        return scale, ox
+
+    def _s2p(self, sx, sy, cv, view):
+        scale, ox = self._get_global_scale_ox()
+        ch = cv.winfo_height()
+        ml, mt, mr, mb = self._margins()
+        dh = ch - mt - mb
+        max_y = self.stage_d if view == "top" else self.stage_h
+        oy = mt + (dh - max_y * scale) / 2
         px = ox + sx * scale
-        py = oy + (self.stage_d - sy) * scale
+        py = oy + (max_y - sy) * scale
         return px, py, scale
 
-    def _px2stage(self, px, py):
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
+    def _p2s(self, px, py, cv, view):
+        scale, ox = self._get_global_scale_ox()
+        ch = cv.winfo_height()
         ml, mt, mr, mb = self._margins()
-        dw = cw - ml - mr
         dh = ch - mt - mb
-        scx = dw / max(self.stage_w, 0.5)
-        scy = dh / max(self.stage_d, 0.5)
-        scale = min(scx, scy)
-        ox = ml + (dw - self.stage_w * scale) / 2
-        oy = mt + (dh - self.stage_d * scale) / 2
+        max_y = self.stage_d if view == "top" else self.stage_h
+        oy = mt + (dh - max_y * scale) / 2
         sx = (px - ox) / scale
-        sy = self.stage_d - (py - oy) / scale
+        sy = max_y - (py - oy) / scale
         return sx, sy
 
     # =========================================================================
     # DRAWING
     # =========================================================================
     def _draw(self):
-        cv = self.canvas
+        if not hasattr(self, 'canvas_top'):
+            return
+        self._draw_view(self.canvas_top, "top")
+        self._draw_view(self.canvas_front, "front")
+
+    def _get_group_color(self, grp):
+        colors = {
+            1: "#ff5555", # Rouge
+            2: "#55ff55", # Vert
+            3: "#5555ff", # Bleu
+            4: "#ffff55", # Jaune
+            5: "#ff55ff"  # Magenta
+        }
+        return colors.get(grp, C["fixture"])
+
+    def _draw_view(self, cv, view):
         cv.delete("all")
         cw = cv.winfo_width()
         ch = cv.winfo_height()
         if cw < 50 or ch < 50:
             return
 
-        _, _, scale = self._stage2px(0, 0)
+        def s2p(sx, syz):
+            return self._s2p(sx, syz, cv, view)
 
         # Stage fill
-        x0, y0, _ = self._stage2px(0, 0)
-        x1, y1, _ = self._stage2px(self.stage_w, self.stage_d)
+        x0, y0, _ = s2p(0, 0)
+        max_y = self.stage_d if view == "top" else self.stage_h
+        x1, y1, _ = s2p(self.stage_w, max_y)
         cv.create_rectangle(x0, y1, x1, y0, fill=C["stage_fill"], outline="")
 
         # Grid 1m
         for gx in range(int(self.stage_w) + 1):
-            xa, ya, _ = self._stage2px(gx, 0)
-            xb, yb, _ = self._stage2px(gx, self.stage_d)
+            xa, ya, _ = s2p(gx, 0)
+            xb, yb, _ = s2p(gx, max_y)
             col = C["grid5"] if gx % 5 == 0 else C["grid"]
             cv.create_line(xa, ya, xb, yb, fill=col, width=1)
-            cv.create_text(xa, ya + 12, text=f"{gx}", fill=C["dim"],
-                           font=("Consolas", 7))
+            cv.create_text(xa, ya + 12, text=f"{gx}", fill=C["dim"], font=("Consolas", 7))
 
-        for gy in range(int(self.stage_d) + 1):
-            xa, ya, _ = self._stage2px(0, gy)
-            xb, yb, _ = self._stage2px(self.stage_w, gy)
+        for gy in range(int(max_y) + 1):
+            xa, ya, _ = s2p(0, gy)
+            xb, yb, _ = s2p(self.stage_w, gy)
             col = C["grid5"] if gy % 5 == 0 else C["grid"]
             cv.create_line(xa, ya, xb, yb, fill=col, width=1)
-            cv.create_text(xa - 16, ya, text=f"{gy}", fill=C["dim"],
-                           font=("Consolas", 7))
+            cv.create_text(xa - 16, ya, text=f"{gy}", fill=C["dim"], font=("Consolas", 7))
 
         # Stage border
         cv.create_rectangle(x0, y1, x1, y0, outline=C["border"], width=2)
 
         # Labels
-        mx, my_pub, _ = self._stage2px(self.stage_w / 2, -0.15)
-        cv.create_text(mx, my_pub + 12, text="▼ PUBLIC ▼", fill=C["dim"],
-                       font=("Segoe UI", 8))
-        mx2, my_fond, _ = self._stage2px(self.stage_w / 2, self.stage_d + 0.15)
-        cv.create_text(mx2, my_fond - 10, text="FOND DE SCÈNE", fill=C["dim"],
-                       font=("Segoe UI", 8))
+        if view == "top":
+            mx, my_pub, _ = s2p(self.stage_w / 2, -0.15)
+            cv.create_text(mx, my_pub + 12, text="▼ PUBLIC ▼", fill=C["dim"], font=("Segoe UI", 8))
+            mx2, my_fond, _ = s2p(self.stage_w / 2, self.stage_d + 0.15)
+            cv.create_text(mx2, my_fond - 10, text="FOND DE SCÈNE", fill=C["dim"], font=("Segoe UI", 8))
+        else:
+            mx, my_pub, _ = s2p(self.stage_w / 2, -0.15)
+            cv.create_text(mx, my_pub + 12, text="▼ SOL ▼", fill=C["dim"], font=("Segoe UI", 8))
+            mx2, my_fond, _ = s2p(self.stage_w / 2, self.stage_h + 0.15)
+            cv.create_text(mx2, my_fond - 10, text="PLAFOND", fill=C["dim"], font=("Segoe UI", 8))
 
-        # Beams (draw before fixtures and tag so they're behind)
+        def get_fx_pos(fx):
+            return (fx["x"], fx["y"]) if view == "top" else (fx["x"], fx["height"])
+            
+        def get_tag_pos():
+            return (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+
+        # Beams
         if self.connected:
-            tx, ty, _ = self._stage2px(self.display_x, self.display_y)
+            tx, ty_z = get_tag_pos()
+            txp, typ, _ = s2p(tx, ty_z)
             for fx in self.fixtures:
-                fxp, fyp, _ = self._stage2px(fx["x"], fx["y"])
-                dx = tx - fxp
-                dy = ty - fyp
+                grp = fx.get("group", 1)
+                if not self.group_toggles.get(grp, True):
+                    continue
+                    
+                fxx, fxy_z = get_fx_pos(fx)
+                fxp, fyp, _ = s2p(fxx, fxy_z)
+                dx = txp - fxp
+                dy = typ - fyp
                 ln = math.sqrt(dx*dx + dy*dy)
                 if ln < 1:
                     continue
-                # Beam cone (triangle)
                 perp_x = -dy / ln * 14
                 perp_y = dx / ln * 14
                 cv.create_polygon(
                     fxp, fyp,
-                    tx + perp_x, ty + perp_y,
-                    tx - perp_x, ty - perp_y,
+                    txp + perp_x, typ + perp_y,
+                    txp - perp_x, typ - perp_y,
                     fill=C["beam_fill"], outline=C["beam"], width=1
                 )
-                cv.create_line(fxp, fyp, tx, ty, fill=C["fixture"],
-                               width=1, dash=(6, 4))
+                cv.create_line(fxp, fyp, txp, typ, fill=C["fixture"], width=1, dash=(6, 4))
 
         # Distance lines from anchors
-        if self.connected:
-            tx, ty, _ = self._stage2px(self.display_x, self.display_y)
+        if self.connected and view == "top":
+            tx, ty = get_tag_pos()
+            txp, typ, _ = s2p(tx, ty)
             for i, a in enumerate(self.anchors):
                 ax, ay = a[:2]
-                apx, apy, _ = self._stage2px(ax, ay)
-                cv.create_line(apx, apy, tx, ty, fill=C["anchor_bg"],
-                               width=1, dash=(3, 5))
-                midx = (apx + tx) / 2
-                midy = (apy + ty) / 2
+                apx, apy, _ = s2p(ax, ay)
+                cv.create_line(apx, apy, txp, typ, fill=C["anchor_bg"], width=1, dash=(3, 5))
+                midx = (apx + txp) / 2
+                midy = (apy + typ) / 2
                 if i < len(self.distances):
-                    cv.create_text(midx, midy - 7,
-                                   text=f"{self.distances[i]:.2f}m",
-                                   fill=C["dim"], font=("Consolas", 7))
+                    cv.create_text(midx, midy - 7, text=f"{self.distances[i]:.2f}m", fill=C["dim"], font=("Consolas", 7))
 
-        # Trail (snapshot to avoid mutation from UDP thread)
-        now = time.time()
-        for trx, try_, tt in list(self.trail):
-            age = now - tt
-            if age > 5:
-                continue
-            alpha = max(0.0, 1.0 - age / 5.0)
-            px, py, _ = self._stage2px(trx, try_)
-            r = max(1, int(3 * alpha))
-            g = int(60 + 60 * alpha)
-            col = f"#{40:02x}{g:02x}{40:02x}"
-            cv.create_oval(px - r, py - r, px + r, py + r, fill=col, outline="")
+        # Trail
+        if view == "top":
+            now = time.time()
+            for trx, try_, tt in list(self.trail):
+                age = now - tt
+                if age > 5:
+                    continue
+                alpha = max(0.0, 1.0 - age / 5.0)
+                px, py, _ = s2p(trx, try_)
+                r = max(1, int(3 * alpha))
+                g = int(60 + 60 * alpha)
+                col = f"#{40:02x}{g:02x}{40:02x}"
+                cv.create_oval(px - r, py - r, px + r, py + r, fill=col, outline="")
 
-        # Fixtures (squares with text label)
+        # Fixtures
         for i, fx in enumerate(self.fixtures):
-            fxp, fyp, _ = self._stage2px(fx["x"], fx["y"])
+            fxx, fxy_z = get_fx_pos(fx)
+            fxp, fyp, _ = s2p(fxx, fxy_z)
             r = 14
-            cv.create_rectangle(fxp - r, fyp - r, fxp + r, fyp + r,
-                                 fill=C["fixture_bg"], outline=C["fixture"], width=2)
-            cv.create_text(fxp, fyp, text=f"L{i+1}",
-                           fill=C["fixture"], font=("Consolas", 8, "bold"))
-            cv.create_text(fxp, fyp - 20, text=fx["name"],
-                           fill=C["fixture"], font=("Segoe UI", 7))
-            cv.create_text(fxp, fyp + 20,
-                           text=f"({fx['x']:.1f},{fx['y']:.1f})",
-                           fill=C["dim"], font=("Consolas", 7))
+            grp = fx.get("group", 1)
+            is_active = self.group_toggles.get(grp, True)
+            grp_col = self._get_group_color(grp) if is_active else C["dim"]
+            bg_col = C["fixture_bg"] if is_active else C["panel"]
+            text_col = C["fixture"] if is_active else C["dim"]
+            
+            cv.create_rectangle(fxp - r, fyp - r, fxp + r, fyp + r, fill=bg_col, outline=grp_col, width=2)
+            cv.create_text(fxp, fyp, text=f"L{i+1}", fill=text_col, font=("Consolas", 8, "bold"))
+            cv.create_text(fxp, fyp - 20, text=fx["name"], fill=text_col, font=("Segoe UI", 7))
+            cv.create_text(fxp, fyp + 20, text=f"({fxx:.1f},{fxy_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
+        # Anchors
         for i, a in enumerate(self.anchors):
-            ax, ay = a[:2]
-            apx, apy, _ = self._stage2px(ax, ay)
-            # Outer ring
+            ax, ay_z = (a[0], a[1]) if view == "top" else (a[0], a[2])
+            apx, apy, _ = s2p(ax, ay_z)
             r1 = 18
-            cv.create_oval(apx - r1, apy - r1, apx + r1, apy + r1,
-                           outline=C["anchor_bg"], width=2)
-            # Inner dot
+            cv.create_oval(apx - r1, apy - r1, apx + r1, apy + r1, outline=C["anchor_bg"], width=2)
             r2 = 9
-            cv.create_oval(apx - r2, apy - r2, apx + r2, apy + r2,
-                           fill=C["anchor"], outline="")
-            # Label
-            cv.create_text(apx, apy - 24, text=f"A{i}",
-                           fill=C["anchor"], font=("Segoe UI", 10, "bold"))
-            # Coords
-            cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay:.1f})",
-                           fill=C["dim"], font=("Consolas", 7))
+            cv.create_oval(apx - r2, apy - r2, apx + r2, apy + r2, fill=C["anchor"], outline="")
+            cv.create_text(apx, apy - 24, text=f"A{i}", fill=C["anchor"], font=("Segoe UI", 10, "bold"))
+            cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
         # Tag
         if self.connected:
-            tx, ty, _ = self._stage2px(self.display_x, self.display_y)
+            tx, ty_z = get_tag_pos()
+            txp, typ, _ = s2p(tx, ty_z)
 
-            # Glow rings
             for gr in [28, 20, 14]:
                 intensity = int(30 * (28 - gr) / 14)
                 gcol = f"#{50 + intensity:02x}{10:02x}{10:02x}"
-                cv.create_oval(tx - gr, ty - gr, tx + gr, ty + gr,
-                               outline=gcol, width=1)
+                cv.create_oval(txp - gr, typ - gr, txp + gr, typ + gr, outline=gcol, width=1)
 
-            # Dot
             r = 9
-            cv.create_oval(tx - r, ty - r, tx + r, ty + r,
-                           fill=C["tag"], outline="#ff8888", width=2)
-            # Crosshair
-            cv.create_line(tx - 14, ty, tx + 14, ty, fill=C["tag"], width=1)
-            cv.create_line(tx, ty - 14, tx, ty + 14, fill=C["tag"], width=1)
-            # Label
-            cv.create_text(tx, ty + 22,
-                           text=f"({self.display_x:.2f}, {self.display_y:.2f})",
-                           fill=C["text"], font=("Consolas", 9, "bold"))
+            cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag"], outline="#ff8888", width=2)
+            cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag"], width=1)
+            cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag"], width=1)
+            cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["text"], font=("Consolas", 9, "bold"))
 
     # =========================================================================
     # DRAG & DROP
     # =========================================================================
-    def _on_press(self, event):
-        # Check if click is near an anchor or fixture
+    def _on_press(self, event, view):
+        cv = self.canvas_top if view == "top" else self.canvas_front
         best_dist = float("inf")
         best_type = None
         best_idx = -1
 
         for i, a in enumerate(self.anchors):
-            ax, ay = a[:2]
-            px, py, _ = self._stage2px(ax, ay)
+            ax, ay_z = (a[0], a[1]) if view == "top" else (a[0], a[2])
+            px, py, _ = self._s2p(ax, ay_z, cv, view)
             d = math.hypot(event.x - px, event.y - py)
             if d < 25 and d < best_dist:
                 best_dist = d
@@ -816,57 +936,82 @@ class Dashboard:
                 best_idx = i
 
         for i, fx in enumerate(self.fixtures):
-            px, py, _ = self._stage2px(fx["x"], fx["y"])
+            fxx, fxy_z = (fx["x"], fx["y"]) if view == "top" else (fx["x"], fx["height"])
+            px, py, _ = self._s2p(fxx, fxy_z, cv, view)
             d = math.hypot(event.x - px, event.y - py)
             if d < 20 and d < best_dist:
                 best_dist = d
                 best_type = "fixture"
                 best_idx = i
 
+        tx, ty_z = (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+        px, py, _ = self._s2p(tx, ty_z, cv, view)
+        d = math.hypot(event.x - px, event.y - py)
+        if d < 25 and d < best_dist:
+            if view == "front" or self.test_mode.get():
+                best_dist = d
+                best_type = "tag"
+                best_idx = -1
+
         if best_type:
             self._drag_type = best_type
             self._drag_idx = best_idx
             self._dragging = True
-            self.canvas.config(cursor="fleur")
-        elif self.test_mode.get():
-            self._drag_type = "test_tag"
+            self._drag_view = view
+            cv.config(cursor="fleur")
+        elif self.test_mode.get() or view == "front":
+            self._drag_type = "tag"
             self._dragging = True
-            self._on_drag(event)
+            self._drag_view = view
+            self._on_drag(event, view)
 
-    def _on_drag(self, event):
-        if not self._dragging:
+    def _on_drag(self, event, view):
+        if not self._dragging or self._drag_view != view:
             return
 
-        sx, sy = self._px2stage(event.x, event.y)
-        # Snap to 0.1m grid
+        cv = self.canvas_top if view == "top" else self.canvas_front
+        sx, sy = self._p2s(event.x, event.y, cv, view)
         sx = round(sx * 10) / 10
         sy = round(sy * 10) / 10
-        # Clamp
+
+        max_y = self.stage_d if view == "top" else self.stage_h
         sx = max(-1, min(self.stage_w + 1, sx))
-        sy = max(-1, min(self.stage_d + 1, sy))
+        sy = max(-1, min(max_y + 1, sy))
 
         if self._drag_type == "anchor":
             self.anchors[self._drag_idx][0] = sx
-            self.anchors[self._drag_idx][1] = sy
+            if view == "top":
+                self.anchors[self._drag_idx][1] = sy
+            else:
+                self.anchors[self._drag_idx][2] = sy
         elif self._drag_type == "fixture":
             self.fixtures[self._drag_idx]["x"] = sx
-            self.fixtures[self._drag_idx]["y"] = sy
-        elif self._drag_type == "test_tag":
-            self.tag_x = sx
-            self.tag_y = sy
-            self.display_x = sx
-            self.display_y = sy
-            self.connected = True
-            self.last_pkt = time.time()
-            self.tag_q = 1.0
+            if view == "top":
+                self.fixtures[self._drag_idx]["y"] = sy
+            else:
+                self.fixtures[self._drag_idx]["height"] = sy
+        elif self._drag_type == "tag":
+            if self.test_mode.get():
+                self.tag_x = sx
+                self.display_x = sx
+                self.connected = True
+                self.last_pkt = time.time()
+                self.tag_q = 1.0
+
+            if view == "top" and self.test_mode.get():
+                self.tag_y = sy
+                self.display_y = sy
+            elif view == "front":
+                self.target_z = sy
 
         self._draw()
 
     def _on_release(self, event):
         if self._dragging:
             self._dragging = False
-            self.canvas.config(cursor="crosshair")
-            if self._drag_type in ["anchor", "fixture"]:
+            self.canvas_top.config(cursor="crosshair")
+            self.canvas_front.config(cursor="crosshair")
+            if self._drag_type in ["anchor", "fixture", "tag"]:
                 self._save_config()
                 self._log(f"[UI] Déplacé {self._drag_type}")
 
@@ -877,20 +1022,25 @@ class Dashboard:
         try:
             new_w = float(self.entry_w.get())
             new_d = float(self.entry_d.get())
-            if 1.0 <= new_w <= 100.0 and 1.0 <= new_d <= 100.0:
+            new_h = float(self.entry_h.get())
+            if 1.0 <= new_w <= 100.0 and 1.0 <= new_d <= 100.0 and 1.0 <= new_h <= 100.0:
                 old_w = self.stage_w
                 old_d = self.stage_d
+                old_h = self.stage_h
                 # Proportionally rescale anchors
                 for a in self.anchors:
                     a[0] = a[0] * new_w / old_w
                     a[1] = a[1] * new_d / old_d
+                    a[2] = a[2] * new_h / old_h
                 # Proportionally rescale fixtures
                 for fx in self.fixtures:
                     fx["x"] = fx["x"] * new_w / old_w
                     fx["y"] = fx["y"] * new_d / old_d
+                    fx["height"] = fx["height"] * new_h / old_h
                 self.stage_w = new_w
                 self.stage_d = new_d
-                self._log(f"[UI] Scène: {new_w}m × {new_d}m (anchors/fixtures recadrés)")
+                self.stage_h = new_h
+                self._log(f"[UI] Scène: {new_w}m × {new_d}m × {new_h}m (anchors/fixtures recadrés)")
                 self._save_config()
                 self._draw()
         except ValueError:
@@ -1305,6 +1455,7 @@ class Dashboard:
         if self.connected:
             self.lbl_x.config(text=f"{self.display_x:.3f} m")
             self.lbl_y.config(text=f"{self.display_y:.3f} m")
+            self.lbl_z.config(text=f"{self.target_z:.3f} m")
             for i, l in enumerate(self.dlbls):
                 if i < len(self.distances):
                     l.config(text=f"{self.distances[i]:.3f} m")
@@ -1313,10 +1464,7 @@ class Dashboard:
             self.lbl_status.config(text="✅ Connecté", fg=C["ok"])
 
             # Pan/Tilt
-            try:
-                th = float(self.ent_cible_z.get())
-            except (ValueError, AttributeError):
-                th = self.cfg.get("tracking", {}).get("target_height", 1.7)
+            th = self.target_z
                 
             new_targets = {}
             for j, fx in enumerate(self.fixtures):
@@ -1357,13 +1505,21 @@ class Dashboard:
                     self.fx_labels[j].config(
                         text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
                         
-                # Store for MA2 Telnet thread
                 try:
-                    gma_id = int(self.fx_ma2_entries[j].get())
+                    if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
+                        fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
                 except:
-                    gma_id = fx.get("gma_id", j + 1)
-                    
-                new_targets[gma_id] = (ma_pan, ma_tilt)
+                    pass
+                        
+                # Store for MA2 Telnet thread (only if group is enabled)
+                grp = fx.get("group", 1)
+                if self.group_toggles.get(grp, True):
+                    try:
+                        gma_id = int(self.fx_ma2_entries[j].get())
+                    except:
+                        gma_id = fx.get("gma_id", j + 1)
+                        
+                    new_targets[gma_id] = (ma_pan, ma_tilt)
                 
             with self.ma2_lock:
                 self.ma2_targets = new_targets
