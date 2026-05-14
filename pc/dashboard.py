@@ -1269,6 +1269,22 @@ class Dashboard:
                 while self.ma2_connected:
                     time.sleep(0.066)
                     
+                    # 1. Toujours vider le buffer de réception pour éviter que la MA2 ne freeze
+                    # même si on n'a rien à envoyer (si MA2 envoie des logs ou un broadcast)
+                    try:
+                        s.setblocking(False)
+                        while True:
+                            data = s.recv(4096)
+                            if not data:
+                                raise ConnectionResetError("Connexion fermée par le serveur")
+                    except BlockingIOError:
+                        pass  # Plus rien à lire, c'est normal
+                    except Exception as e:
+                        self._log(f"[MA2] ✗ Erreur lecture: {e}")
+                        break
+                    finally:
+                        s.setblocking(True)
+                    
                     with self.ma2_lock:
                         targets = list(self.ma2_targets.items())
                         
@@ -1289,19 +1305,6 @@ class Dashboard:
                     
                     try:
                         s.sendall(cmd.encode("utf-8"))
-                        
-                        # Vider le buffer de réception pour éviter que la MA2 ne freeze
-                        try:
-                            s.setblocking(False)
-                            while True:
-                                data = s.recv(4096)
-                                if not data:
-                                    break
-                        except BlockingIOError:
-                            pass  # Plus rien à lire
-                        finally:
-                            s.setblocking(True)
-                            
                     except Exception as e:
                         self._log(f"[MA2] ✗ Erreur envoi: {e}")
                         break

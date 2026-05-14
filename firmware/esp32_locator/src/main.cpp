@@ -14,6 +14,8 @@
 #include "trilateration.h"
 #include "network.h"
 #include <Preferences.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 #ifdef BOARD_TTGO
 #include <Wire.h>
@@ -197,6 +199,13 @@ static void netTask(void* param) {
     bool  hasNewData = false;
 
     for (;;) {
+        // --- Mode AP de secours : ne faire que handleAP() ---
+        if (net.isAPMode()) {
+            net.handleAP();
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+
         // --- Maintenir WiFi ---
         net.maintainConnection();
 
@@ -363,6 +372,7 @@ static void netTask(void* param) {
 // =============================================================================
 void setup() {
     Serial.begin(115200);
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Désactiver brownout detector
     delay(1000);
 
     Serial.println();
@@ -393,10 +403,128 @@ void setup() {
     Serial.printf("  A1: (%.2f, %.2f)\n", ANCHOR2_X, ANCHOR2_Y);
     Serial.printf("  A2: (%.2f, %.2f)\n", ANCHOR3_X, ANCHOR3_Y);
 
-    // --- Initialiser le WiFi ---
-    if (!net.connectWiFi(WIFI_SSID, WIFI_PASS)) {
-        Serial.println("[MAIN] ⚠ WiFi non connecté — les données ne seront pas envoyées.");
+    // --- Charger config réseau depuis NVS (ou fallback sur config.h) ---
+    prefs.begin("netcfg", false);
+    String wifiSSID  = prefs.getString("ssid",     WIFI_SSID);
+    String wifiPass  = prefs.getString("pass",     WIFI_PASS);
+    String udpIP     = prefs.getString("udp_ip",   UDP_TARGET_IP);
+    uint16_t udpPort = prefs.getUShort("udp_port", UDP_TARGET_PORT);
+    prefs.end();
+
+    net.setTarget(udpIP.c_str(), udpPort);
+    Serial.printf("[MAIN] Config réseau: WiFi='%s' UDP=%s:%u\n",
+                  wifiSSID.c_str(), udpIP.c_str(), udpPort);
+
+    // --- OLED (TTGO) — Init AVANT WiFi pour afficher le boot ---
+#ifdef BOARD_TTGO
+    Wire.begin(OLED_SDA, OLED_SCL);
+    analogSetAttenuation(ADC_11db);
+    pinMode(BAT_ADC_PIN, INPUT);
+    bool oledOK = oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+    if (!oledOK) {
+        Serial.println("[MAIN] ⚠ Échec initialisation OLED");
+    } else {
+        oled.setRotation(2);  // 180°
+        oled.setTextSize(1);
+        oled.setTextColor(SSD1306_WHITE);
     }
+#endif
+
+    // --- Initialiser le WiFi (avec feedback OLED sur TTGO) ---
+#ifdef BOARD_TTGO
+    {
+        Serial.printf("[NET] Connexion WiFi '%s'...\n", wifiSSID.c_str());
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+
+        uint32_t wifiStart = millis();
+        int dots = 0;
+        bool wifiOK = false;
+
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - wifiStart > 10000) break;
+
+            // --- Mise à jour OLED pendant la connexion ---
+            if (oledOK) {
+                oled.clearDisplay();
+
+                // Titre centré
+                const char* title = "SUDSHOW LOCATOR";
+                int16_t tx = (SCREEN_WIDTH - (int)strlen(title) * 6) / 2;
+                oled.setCursor(tx, 4);
+                oled.print(title);
+
+                // Séparation
+                oled.drawLine(10, 16, SCREEN_WIDTH - 10, 16, SSD1306_WHITE);
+
+                // "Connexion WiFi" + points animés
+                oled.setCursor(10, 24);
+                oled.print("Connexion WiFi");
+                for (int i = 0; i < (dots % 4); i++) oled.print(".");
+
+                // Nom du réseau
+                oled.setCursor(10, 40);
+                oled.print("AP: ");
+                oled.print(wifiSSID.c_str());
+
+                // Barre animée en bas
+                int barX = (dots % 4) * (SCREEN_WIDTH / 4);
+                oled.fillRect(barX, SCREEN_HEIGHT - 3, SCREEN_WIDTH / 4, 3, SSD1306_WHITE);
+
+                oled.display();
+            }
+
+            dots++;
+            delay(250);
+            Serial.print(".");
+        }
+
+        wifiOK = (WiFi.status() == WL_CONNECTED);
+
+        if (wifiOK) {
+            Serial.printf("\n[NET] ✓ WiFi connecté ! IP: %s\n", WiFi.localIP().toString().c_str());
+            net.setTarget(udpIP.c_str(), udpPort);
+
+            if (oledOK) {
+                oled.clearDisplay();
+                oled.setCursor(10, 4);
+                oled.print("SUDSHOW LOCATOR");
+                oled.drawLine(10, 16, SCREEN_WIDTH - 10, 16, SSD1306_WHITE);
+                oled.setCursor(10, 24);
+                oled.print("WiFi connecte !");
+                oled.setCursor(10, 40);
+                oled.print("IP: ");
+                oled.print(WiFi.localIP());
+                oled.display();
+                delay(1500);
+            }
+        } else {
+            Serial.println("\n[MAIN] ⚠ WiFi non connecté — démarrage du mode AP.");
+            net.startAPMode(OTA_AP_SSID);
+
+            if (oledOK) {
+                oled.clearDisplay();
+                oled.setCursor(10, 4);
+                oled.print("SUDSHOW LOCATOR");
+                oled.drawLine(10, 16, SCREEN_WIDTH - 10, 16, SSD1306_WHITE);
+                oled.setCursor(10, 24);
+                oled.print("Mode AP actif");
+                oled.setCursor(10, 40);
+                oled.print("AP: ");
+                oled.print(OTA_AP_SSID);
+                oled.setCursor(10, 52);
+                oled.print("http://192.168.4.1");
+                oled.display();
+            }
+        }
+    }
+#else
+    // --- Board sans OLED : connexion simple ---
+    if (!net.connectWiFi(wifiSSID.c_str(), wifiPass.c_str())) {
+        Serial.println("[MAIN] ⚠ WiFi non connecté — démarrage du mode AP de configuration.");
+        net.startAPMode(OTA_AP_SSID);
+    }
+#endif
 
     // --- Initialiser la liaison UWB ---
     uwb.begin(Serial2, UWB_SERIAL_RX, UWB_SERIAL_TX, UWB_BAUD_RATE);
@@ -419,25 +547,6 @@ void setup() {
     if (!atReady) {
         Serial.println("[MAIN] ⚠ Module non détecté en mode AT — écoute passive.");
     }
-
-    // --- OLED + Batterie (TTGO) ---
-#ifdef BOARD_TTGO
-    Wire.begin(OLED_SDA, OLED_SCL);
-    analogSetAttenuation(ADC_11db);
-    pinMode(BAT_ADC_PIN, INPUT);
-    if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-        Serial.println("[MAIN] ⚠ Échec initialisation OLED");
-    } else {
-        oled.clearDisplay();
-        oled.setRotation(2);  // 180°
-        oled.setTextSize(1);
-        oled.setTextColor(SSD1306_WHITE);
-        oled.setCursor(0, 0);
-        oled.println("SudShow Locator");
-        oled.println("Dual-Core Ready!");
-        oled.display();
-    }
-#endif
 
     // --- Lancer les tâches FreeRTOS ---
     Serial.println();

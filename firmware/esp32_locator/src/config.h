@@ -7,18 +7,27 @@
 // =============================================================================
 
 // =========================
-//   RÉSEAU WiFi
+//   RÉSEAU WiFi — Valeurs par défaut (NVS au premier démarrage)
 // =========================
+// Ces valeurs ne sont utilisées que si la NVS (flash) ne contient pas
+// encore de configuration. Modifiez-les via la page web de l'AP de secours.
 #define WIFI_SSID           "slyzic-hotspot"
 #define WIFI_PASS           "totototo"
 
 // =========================
-//   UDP — Envoi position
+//   UDP — Envoi position — Valeurs par défaut (NVS au premier démarrage)
 // =========================
 // IP du PC qui exécute le script Python.
 // Utilisez "255.255.255.255" pour broadcast sur tout le réseau.
 #define UDP_TARGET_IP       "10.3.141.20"
 #define UDP_TARGET_PORT     9000
+
+// =========================
+//   AP de secours (OTA + Configuration)
+// =========================
+// Nom du réseau WiFi créé par l'ESP32 si la connexion STA échoue.
+// Accessible à : http://192.168.4.1/
+#define OTA_AP_SSID         "sudshow_locator"
 
 // =========================
 //   POSITIONS DES ANCHORS

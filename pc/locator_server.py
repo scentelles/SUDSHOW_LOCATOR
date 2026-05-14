@@ -220,6 +220,8 @@ class GrandMA2Connection:
 
         with self._lock:
             try:
+                # Vider d'abord le buffer de réception pour éviter un blocage
+                self.tn.read_very_eager()
                 self.tn.write(f"{cmd}\r\n".encode("utf-8"))
             except Exception as e:
                 print(f"[GMA2] ✗ Erreur envoi: {e}")
@@ -359,6 +361,11 @@ class LocatorServer:
 
                     # Envoyer à GrandMA2
                     if gma.connected:
+                        # Vider le buffer Telnet pour éviter que la console ne freeze
+                        with gma._lock:
+                            if gma.tn:
+                                gma.tn.read_very_eager()
+                                
                         gma.set_fixture_pan_tilt(
                             fx.gma_fixture_id, pan, tilt,
                             self.config.dead_zone_deg
