@@ -10,6 +10,7 @@ from tkinter import simpledialog, filedialog, messagebox
 import socket
 import json
 import math
+import re
 import threading
 import time
 import os
@@ -263,6 +264,8 @@ class Dashboard:
             fx["y"] = round(fx["y"], 2)
             if "visible" not in fx:
                 fx["visible"] = True
+            if "color_subfixtures" not in fx:
+                fx["color_subfixtures"] = ""
             try:
                 if hasattr(self, 'fx_ma2_entries') and i < len(self.fx_ma2_entries):
                     fx["gma_id"] = int(self.fx_ma2_entries[i].get())
@@ -595,6 +598,7 @@ class Dashboard:
                 "name": f"Lyre {i+1}",
                 "group": 1,
                 "visible": True,
+                "color_subfixtures": "",
                 "x": start_x + i * spacing,
                 "y": self.stage_d - 0.5,
                 "height": 4.0,
@@ -1066,7 +1070,7 @@ class Dashboard:
         top = tk.Toplevel(self.root)
         top.title(f"⚙️ {fx['name']}")
         top.configure(bg=C["bg"])
-        top.geometry("340x560")
+        top.geometry("340x590")
         top.transient(self.root)
         top.grab_set()
 
@@ -1102,6 +1106,9 @@ class Dashboard:
         v_tinv = _check(top, "Inverser Tilt", "tilt_invert", False)
         
         e_grp = _row(top, "Groupe (1-5)", "group", 1)
+        e_col_sub = _row(top, "Sous-fix. Couleur", "color_subfixtures", "")
+        tk.Label(top, text="  ↳ ex: .2 Thru .4  (ou vide si lyre standard)",
+                 font=("Segoe UI", 7), bg=C["bg"], fg=C["dim"], anchor="w").pack(fill="x", padx=12, pady=(0, 2))
 
         # Zone de texte : commande MA2 supplémentaire à l'activation du mode Manual
         f_cmd = tk.Frame(top, bg=C["bg"])
@@ -1136,6 +1143,7 @@ class Dashboard:
                 fx["tilt_offset"] = float(e_toff.get())
                 fx["tilt_invert"] = v_tinv.get()
                 fx["group"] = max(1, min(5, int(e_grp.get())))
+                fx["color_subfixtures"] = e_col_sub.get().strip()
                 fx["manual_cmd"] = txt_cmd.get("1.0", "end-1c").strip()
                 with self.ma2_lock:
                     self.ma2_resend_manual_cmd = True
@@ -1152,39 +1160,98 @@ class Dashboard:
         hlp = tk.Toplevel(parent_win)
         hlp.title("❓ Aide — Commandes MA2 (Mode Manual)")
         hlp.configure(bg=C["bg"])
-        hlp.geometry("540x480")
+        hlp.geometry("620x650")
         hlp.transient(parent_win)
         hlp.grab_set()
 
-        tk.Label(hlp, text="Exemples de commandes MA2 en mode Manual",
-                 font=self.ft_section, bg=C["bg"], fg=C["accent"]).pack(anchor="w", padx=12, pady=(10, 4))
+        # Canvas défilant pour accueillir tous les exemples et explications
+        cv = tk.Canvas(hlp, bg=C["bg"], highlightthickness=0)
+        sb = tk.Scrollbar(hlp, orient="vertical", command=cv.yview)
+        sf = tk.Frame(cv, bg=C["bg"])
 
-        tk.Label(hlp, text="Le dashboard ajoute automatiquement 'Fixture <ID>' devant chaque commande\n"
-                           "commençant par At, Attribute, PresetType ou Stomp.\n"
-                           "Séparez plusieurs commandes par ';' ou par un retour à la ligne.",
-                 font=self.ft_label, bg=C["bg"], fg=C["text"], justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+        sf.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv_win = cv.create_window((0, 0), window=sf, anchor="nw")
+        cv.bind("<Configure>", lambda e: cv.itemconfig(cv_win, width=e.width))
+        cv.configure(yscrollcommand=sb.set)
+
+        def _on_mousewheel(event):
+            try:
+                if cv.winfo_exists():
+                    cv.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except:
+                pass
+        cv.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _close_help():
+            try:
+                cv.unbind_all("<MouseWheel>")
+            except:
+                pass
+            hlp.destroy()
+        hlp.protocol("WM_DELETE_WINDOW", _close_help)
+
+        cv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        tk.Label(sf, text="Guide & Exemples — Commandes MA2 (Mode Manual)",
+                 font=self.ft_section, bg=C["bg"], fg=C["accent"]).pack(anchor="w", padx=14, pady=(12, 6))
+
+        # Encadré explicatif pour {id} et {sub}
+        info_frame = tk.Frame(sf, bg=C["panel"], padx=10, pady=8, highlightbackground=C["border"], highlightthickness=1)
+        info_frame.pack(fill="x", padx=14, pady=(0, 10))
+
+        tk.Label(info_frame, text="💡 Utilisation des variables dynamiques {id} et {sub} :",
+                 font=("Segoe UI", 9, "bold"), bg=C["panel"], fg=C["fixture"]).pack(anchor="w")
+
+        info_text = (
+            "• {id}  : Remplacé par l'ID GrandMA2 de la lyre (ex: 301)\n"
+            "• {sub} : Remplacé par les sous-fixtures définies dans 'Sous-fix. Couleur'\n"
+            "          (ex: 301.2 Thru 301.4, ou 301 si non défini)\n\n"
+            "Deux syntaxes sont possibles :\n"
+            "1. Syntaxe explicite avec {id} ou {sub} (recommandée) :\n"
+            "   Exemple : Fixture {id} At 100 ; Fixture {sub} At Preset 4.1\n"
+            "2. Raccourci automatique :\n"
+            "   Si vous commencez directement par 'At ...', 'Attribute ...' ou 'Stomp ...',\n"
+            "   le dashboard ajoute automatiquement 'Fixture {id}' devant chaque commande.\n"
+            "   Exemple : 'At 100 ; At Preset 4.1' devient 'Fixture 301 At 100 ; Fixture 301 At Preset 4.1'\n"
+            "• Séparez plusieurs instructions par ';' ou par un saut de ligne."
+        )
+        tk.Label(info_frame, text=info_text, font=self.ft_small, bg=C["panel"],
+                 fg=C["text"], justify="left", anchor="w").pack(fill="x", pady=(4, 0))
 
         examples = [
-            ("1. Avec un Preset Couleur « Blanc » (recommandé)",
-             "Dimmer à 100% + 1er preset de la piscine Color (4.1) :",
+            ("1. Avec Preset Couleur « Blanc » (syntaxe explicite avec {id})",
+             "Dimmer à 100% sur la lyre principale + 1er preset de la piscine Color (4.1) :",
+             'Fixture {id} At 100 ; Fixture {id} At Preset 4.1'),
+
+            ("2. Lyre multi-instances / sous-fixtures (Aura, Wash LEDs)",
+             "Dimmer sur le corps ({id}) et couleur sur les sous-fixtures ({sub}) :",
+             'Fixture {id} At 100 ; Fixture {sub} At 100 ; Fixture {sub} At Preset 4.1'),
+
+            ("3. Blanc universel sans preset (valeur par défaut console)",
+             "Dimmer à 100% + réinitialise la fonction Color à sa valeur par défaut (Open/Blanc) :",
+             'Fixture {id} At 100 ; Fixture {id} PresetType "Color" At Default'),
+
+            ("4. Lyre à roue de couleurs (Color1)",
+             "Dimmer à 100% + positionne la roue de couleur 1 à 0 (Open/Blanc) :",
+             'Fixture {id} At 100 ; Fixture {id} Attribute "Color1" At 0'),
+
+            ("5. Lyre LED RGB / RGBW directe (canaux ColorRGB)",
+             "Dimmer à 100% + rouge, vert, bleu et blanc à 100% :",
+             'Fixture {id} At 100 ; Fixture {id} Attribute "ColorRGB1" At 100 ; Fixture {id} Attribute "ColorRGB2" At 100 ; Fixture {id} Attribute "ColorRGB3" At 100 ; Fixture {id} Attribute "ColorRGB5" At 100'),
+
+            ("6. Bloquer les effets en cours (Stomp) + Allumer",
+             "Stompe les effets de Dimmer & Couleur d'autres séquences puis allume en blanc :",
+             'Fixture {id} Stomp PresetType "Dimmer" ; Fixture {id} Stomp PresetType "Color" ; Fixture {id} At 100 ; Fixture {id} PresetType "Color" At Default'),
+
+            ("7. Raccourci automatique (sans taper 'Fixture {id}')",
+             "Écriture courte équivalente à l'exemple 1 (le dashboard injecte automatiquement 'Fixture {id}') :",
              'At 100 ; At Preset 4.1'),
-            ("2. Blanc universel (sans Preset)",
-             "Dimmer à 100% + remet toute la fonction Color à sa valeur par défaut (Open/Blanc) :",
-             'At 100 ; PresetType "Color" At Default'),
-            ("3. Lyre à roue de couleurs (Color1)",
-             "Dimmer à 100% + roue de couleur à 0 (Blanc) :",
-             'At 100 ; Attribute "Color1" At 0'),
-            ("4. Lyre LED RGB / RGBW (ColorRGB1/2/3/5)",
-             "Dimmer à 100% + RGB et White à 100% :",
-             'At 100 ; Attribute "ColorRGB1" At 100 ; Attribute "ColorRGB2" At 100 ; Attribute "ColorRGB3" At 100 ; Attribute "ColorRGB5" At 100'),
-            ("5. Bloquer aussi un effet de Couleur / Dimmer en cours",
-             "Coupe l'effet d'exécuteur sur Dimmer & Color puis force le blanc à 100% :",
-             'Stomp PresetType "Dimmer" ; Stomp PresetType "Color"\nAt 100 ; PresetType "Color" At Default'),
         ]
 
         for title, desc, cmd_str in examples:
-            box = tk.Frame(hlp, bg=C["panel"], padx=8, pady=6, highlightbackground=C["border"], highlightthickness=1)
-            box.pack(fill="x", padx=12, pady=3)
+            box = tk.Frame(sf, bg=C["panel"], padx=8, pady=6, highlightbackground=C["border"], highlightthickness=1)
+            box.pack(fill="x", padx=14, pady=3)
             tk.Label(box, text=title, font=("Segoe UI", 9, "bold"), bg=C["panel"], fg=C["fixture"], anchor="w").pack(fill="x")
             tk.Label(box, text=desc, font=("Segoe UI", 8), bg=C["panel"], fg=C["dim"], anchor="w").pack(fill="x")
 
@@ -1200,14 +1267,14 @@ class Dashboard:
                 def _use_cmd(c=cmd_str):
                     txt_target.delete("1.0", "end")
                     txt_target.insert("1.0", c)
-                    hlp.destroy()
+                    _close_help()
                 tk.Button(cmd_row, text="Utiliser", font=("Segoe UI", 8, "bold"),
                           bg=C["border"], fg=C["accent"], bd=0, padx=8, pady=1,
                           activebackground=C["accent"], activeforeground="#000",
                           cursor="hand2", command=_use_cmd).pack(side="right")
 
-        tk.Button(hlp, text="Fermer", font=self.ft_small, bg=C["border"], fg=C["text"],
-                  bd=0, padx=14, pady=4, command=hlp.destroy).pack(pady=10)
+        tk.Button(sf, text="Fermer", font=self.ft_small, bg=C["border"], fg=C["text"],
+                  bd=0, padx=16, pady=4, command=_close_help).pack(pady=14)
 
     def _build_fixtures_list(self):
         for widget in self.frm_fixtures.winfo_children():
@@ -1584,6 +1651,33 @@ class Dashboard:
                            fg=C["dim"] if is_empty else accent_col,
                            font=("Segoe UI", 10, "bold"))
 
+    def _get_fixture_color_target(self, fx, gma_id):
+        """
+        Détermine la cible MA2 pour la couleur d'une lyre (support des sous-fixtures).
+        - Si vide : retourne str(gma_id) (ex: '301')
+        - Syntaxe relative avec points (ex: '.2 Thru .4', '.2 + .3') :
+          remplace les '.X' par '{gma_id}.X' -> '301.2 Thru 301.4'
+        - Syntaxe relative sans points (ex: '2 Thru 4') :
+          transforme en '{gma_id}.2 Thru {gma_id}.4'
+        - Syntaxe absolue (ex: '301.2 Thru 301.4' ou '501') :
+          conservée telle quelle
+        """
+        sub = str(fx.get("color_subfixtures", "")).strip()
+        if not sub:
+            return str(gma_id)
+
+        # Si le pattern contient des points non précédés d'un chiffre (ex: ".2 Thru .4", ".2 + .3", ".2")
+        if re.search(r'(?<!\d)\.(\d+)', sub):
+            return re.sub(r'(?<!\d)\.(\d+)', rf'{gma_id}.\1', sub)
+
+        # Si le pattern est "X Thru Y" sans point (ex: "2 Thru 4")
+        m_thru = re.match(r'^(\d+)\s+thru\s+(\d+)$', sub, re.IGNORECASE)
+        if m_thru:
+            return f"{gma_id}.{m_thru.group(1)} Thru {gma_id}.{m_thru.group(2)}"
+
+        # Si c'est déjà un identifiant absolu ou une cible personnalisée
+        return sub
+
     def _apply_focus_color(self, fp, name, hex_code, rgb):
         s_fp = str(fp)
         self.focus_current_color[s_fp] = hex_code
@@ -1597,8 +1691,8 @@ class Dashboard:
                 else:
                     s_box.config(bg=C["canvas_bg"])
 
-        # Récupérer les lyres affectées à ce Focus
-        gids = []
+        # Récupérer les cibles de couleur des lyres affectées à ce Focus
+        color_targets = []
         for j, fx in enumerate(self.fixtures):
             if not fx.get("visible", True):
                 continue
@@ -1614,10 +1708,12 @@ class Dashboard:
                     gid = int(self.fx_ma2_entries[j].get())
                 except:
                     gid = fx.get("gma_id", j + 1)
-                gids.append(gid)
+                target = self._get_fixture_color_target(fx, gid)
+                if target and target not in color_targets:
+                    color_targets.append(target)
 
-        if gids:
-            g_str = " + ".join(str(g) for g in sorted(gids))
+        if color_targets:
+            g_str = " + ".join(color_targets)
             r, g_val, b = rgb
             if name == "Blanc":
                 cmd = (f'Fixture {g_str} Attribute "ColorRGB1" At 100 ; '
@@ -2420,11 +2516,12 @@ class Dashboard:
             self._save_config()
             self.ma2_connected = True
 
-    def _format_fixture_manual_cmd(self, gma_id, raw_cmd):
+    def _format_fixture_manual_cmd(self, gma_id, raw_cmd, color_target=None):
         if not raw_cmd or not raw_cmd.strip():
             return ""
+        sub_str = str(color_target) if color_target else str(gma_id)
         lines = [l.strip() for l in raw_cmd.replace("\r", "").split("\n") if l.strip()]
-        raw_joined = " ; ".join(lines).replace("{id}", str(gma_id))
+        raw_joined = " ; ".join(lines).replace("{id}", str(gma_id)).replace("{sub}", sub_str)
         parts = [p.strip() for p in raw_joined.split(";") if p.strip()]
         formatted_parts = []
         for p in parts:
@@ -2432,6 +2529,9 @@ class Dashboard:
             if (low.startswith("attribute ") or low.startswith("at ") or
                 low.startswith("stomp ") or low.startswith("presettype ")):
                 formatted_parts.append(f"Fixture {gma_id} {p}")
+            elif re.match(r'^(\d+(\.\d+)?(\s+thru\s+\d+(\.\d+)?)?)\s+(at|attribute|presettype|stomp)', low):
+                # Si l'utilisateur a écrit "{id} At 100" ou "{sub} At 100" sans le mot "Fixture" devant
+                formatted_parts.append(f"Fixture {p}")
             else:
                 formatted_parts.append(p)
         return " ; ".join(formatted_parts)
@@ -2613,7 +2713,8 @@ class Dashboard:
                             for gid, val in targets:
                                 if gid in new_manual and len(val) >= 4:
                                     raw_mcmd = val[3]
-                                    f_cmd = self._format_fixture_manual_cmd(gid, raw_mcmd)
+                                    col_tgt = val[4] if len(val) >= 5 else None
+                                    f_cmd = self._format_fixture_manual_cmd(gid, raw_mcmd, col_tgt)
                                     if f_cmd:
                                         custom_lines.append(f_cmd)
                             if custom_lines:
@@ -2982,8 +3083,8 @@ class Dashboard:
                     gma_id = int(self.fx_ma2_entries[j].get())
                 except:
                     gma_id = fx.get("gma_id", j + 1)
-                    
-                new_targets[gma_id] = (ma_pan, ma_tilt, grp, fx.get("manual_cmd", "") if is_manual_fp else "")
+                col_tgt = self._get_fixture_color_target(fx, gma_id)
+                new_targets[gma_id] = (ma_pan, ma_tilt, grp, fx.get("manual_cmd", "") if is_manual_fp else "", col_tgt)
             
         with self.ma2_lock:
             self.ma2_targets = new_targets

@@ -2,23 +2,23 @@
     "_comment": "SudShow Locator — Configuration PC",
     "_units": "Toutes les distances en mètres, angles en degrés",
     "stage": {
-        "width": 10.0,
+        "width": 8.0,
         "depth": 5.0,
         "height": 3.5
     },
     "anchors": {
         "a0": {
-            "x": 3.2,
+            "x": 2.56,
             "y": 4.5,
             "z": 1.7
         },
         "a1": {
-            "x": 6.4,
+            "x": 5.12,
             "y": 4.4,
             "z": 1.7
         },
         "a2": {
-            "x": 4.7,
+            "x": 3.76,
             "y": 0.1,
             "z": 0.88
         }
@@ -27,7 +27,7 @@
         {
             "id": 1,
             "name": "Lyre 1",
-            "x": 2.0,
+            "x": 1.6,
             "y": 4.29,
             "height": 3.15,
             "gma_fixture_id": 1,
@@ -46,13 +46,15 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "id": 2,
             "name": "Lyre 2",
-            "x": 3.14,
-            "y": 4.29,
+            "x": 3.4,
+            "y": 4.3,
             "height": 3.15,
             "gma_fixture_id": 2,
             "pan_range_deg": 540,
@@ -70,13 +72,15 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "id": 3,
             "name": "Lyre 3",
-            "x": 4.43,
-            "y": 4.29,
+            "x": 3.9,
+            "y": 4.3,
             "height": 3.15,
             "gma_fixture_id": 3,
             "pan_range_deg": 540,
@@ -94,12 +98,14 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "id": 4,
             "name": "Lyre 4",
-            "x": 5.57,
+            "x": 4.46,
             "y": 4.29,
             "height": 3.15,
             "gma_fixture_id": 4,
@@ -118,11 +124,13 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 5",
-            "x": 6.71,
+            "x": 5.37,
             "y": 4.29,
             "height": 3.15,
             "gma_id": 305,
@@ -135,11 +143,13 @@
             "tilt_offset": 90.0,
             "tilt_invert": true,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 6",
-            "x": 7.57,
+            "x": 6.06,
             "y": 4.29,
             "height": 3.15,
             "gma_id": 306,
@@ -152,12 +162,14 @@
             "tilt_offset": 90.0,
             "tilt_invert": true,
             "group": 1,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": false,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 7",
             "group": 2,
-            "x": 3.3,
+            "x": 2.9,
             "y": 2.3,
             "height": 0.3,
             "gma_id": 205,
@@ -169,12 +181,14 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": true,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 8",
             "group": 2,
-            "x": 7.1,
+            "x": 5.1,
             "y": 2.3,
             "height": 0.2,
             "gma_id": 206,
@@ -186,12 +200,14 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": true,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 9",
             "group": 3,
-            "x": 0.3,
+            "x": 0.24,
             "y": 0.2,
             "height": 0.4,
             "gma_id": 201,
@@ -203,12 +219,14 @@
             "tilt_max": 95.0,
             "tilt_offset": -90.0,
             "tilt_invert": true,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": true,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 10",
             "group": 3,
-            "x": 9.7,
+            "x": 7.76,
             "y": 0.3,
             "height": 0.2,
             "gma_id": 203,
@@ -220,14 +238,16 @@
             "tilt_max": 95.0,
             "tilt_offset": -90.0,
             "tilt_invert": true,
-            "manual_cmd": ""
+            "manual_cmd": "",
+            "visible": true,
+            "color_subfixtures": ""
         },
         {
             "name": "Lyre 11",
             "group": 4,
-            "x": 4.0,
-            "y": 3.2,
-            "height": 0.2,
+            "x": 2.1,
+            "y": 4.6,
+            "height": 2.7,
             "gma_id": 750,
             "pan_min": -270.0,
             "pan_max": 270.0,
@@ -237,14 +257,16 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture 750.3 thru 750.4 At Preset 4.1; Fixture 750.2 At 0"
+            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "visible": true,
+            "color_subfixtures": ".2 thru .4"
         },
         {
             "name": "Lyre 12",
             "group": 4,
-            "x": 4.5,
-            "y": 3.2,
-            "height": 0.2,
+            "x": 3.4,
+            "y": 4.6,
+            "height": 2.7,
             "gma_id": 751,
             "pan_min": -270.0,
             "pan_max": 270.0,
@@ -254,14 +276,16 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture 751.3 thru 751.4 At Preset 4.1; Fixture 751.2 At 0"
+            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "visible": true,
+            "color_subfixtures": ".2 thru .4"
         },
         {
             "name": "Lyre 13",
             "group": 4,
-            "x": 5.0,
-            "y": 3.2,
-            "height": 0.2,
+            "x": 4.5,
+            "y": 4.6,
+            "height": 2.7,
             "gma_id": 752,
             "pan_min": -270.0,
             "pan_max": 270.0,
@@ -271,14 +295,16 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture 752.3 thru 752.4 At Preset 4.1; Fixture 752.2 At 0"
+            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "visible": true,
+            "color_subfixtures": ".2 thru .4"
         },
         {
             "name": "Lyre 14",
             "group": 4,
-            "x": 5.5,
-            "y": 3.2,
-            "height": 0.2,
+            "x": 5.7,
+            "y": 4.6,
+            "height": 2.7,
             "gma_id": 753,
             "pan_min": -270.0,
             "pan_max": 270.0,
@@ -288,7 +314,9 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture 753.3 thru 753.4 At Preset 4.1; Fixture 753.2 At 0"
+            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "visible": true,
+            "color_subfixtures": ".2 thru .4"
         }
     ],
     "network": {
@@ -302,7 +330,7 @@
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
-        "target_height": 1.3
+        "target_height": 1.05
     },
     "calibration": {
         "a0": 0.7,
@@ -319,20 +347,20 @@
     },
     "hide_anchors": true,
     "focus_point_2": {
-        "x": 7.7,
-        "y": 1.2,
+        "x": 4.0,
+        "y": 0.9,
         "z": 1.2,
         "groups": {
             "1": false,
-            "2": true,
-            "3": true,
+            "2": false,
+            "3": false,
             "4": true,
-            "5": true
+            "5": false
         }
     },
     "focus_point_1": {
-        "x": 2.5,
-        "y": 1.3
+        "x": 1.3,
+        "y": 1.1
     },
     "group_presets": {
         "1": [
@@ -676,16 +704,16 @@
     "focus_presets": {
         "1": [
             {
-                "label": "Batteur",
-                "x": 5.0,
+                "label": "Front",
+                "x": 4.2,
                 "y": 1.2,
                 "z": 1.3,
                 "empty": false
             },
             {
-                "label": "dsfsdfsdfs",
-                "x": 5.0,
-                "y": 1.2,
+                "label": "Drums",
+                "x": 4.0,
+                "y": 3.1,
                 "z": 1.3,
                 "empty": false
             },
@@ -734,32 +762,32 @@
         ],
         "2": [
             {
-                "label": "P1",
-                "x": 8.8,
-                "y": 1.0,
+                "label": "Front",
+                "x": 4.0,
+                "y": 0.9,
                 "z": 1.2,
                 "empty": false
             },
             {
-                "label": "P2",
-                "x": 1.2,
+                "label": "Drums",
+                "x": 4.0,
+                "y": 3.1,
+                "z": 1.2,
+                "empty": false
+            },
+            {
+                "label": "Jardin",
+                "x": 1.3,
                 "y": 1.1,
-                "z": 1.2,
+                "z": 1.05,
                 "empty": false
             },
             {
-                "label": "P3",
-                "x": 7.5,
+                "label": "Cour",
+                "x": 6.6,
                 "y": 1.2,
-                "z": 1.2,
+                "z": 1.05,
                 "empty": false
-            },
-            {
-                "label": "P4",
-                "x": 5.0,
-                "y": 2.5,
-                "z": 1.2,
-                "empty": true
             },
             {
                 "label": "P5",
