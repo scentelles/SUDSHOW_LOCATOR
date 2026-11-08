@@ -6,12 +6,14 @@ Plan 2D interactif avec anchors/lyres draggables, faisceaux, et log ESP32.
 
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import simpledialog, filedialog, messagebox
 import socket
 import json
 import math
 import threading
 import time
 import os
+import copy
 import collections
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -60,7 +62,8 @@ class Dashboard:
         self.root.minsize(1000, 700)
 
         # --- Config ---
-        self.cfg = self._load_config()
+        self.current_config_file = CONFIG_FILE
+        self.cfg = self._load_config(self.current_config_file)
         self.stage_w = self.cfg.get("stage", {}).get("width", 10.0)
         self.stage_d = self.cfg.get("stage", {}).get("depth", 5.0)
         self.stage_h = self.cfg.get("stage", {}).get("height", 3.0)
@@ -139,7 +142,8 @@ class Dashboard:
         
         self.test_mode = tk.BooleanVar(value=False)    # Manual F1
         self.test_mode_2 = tk.BooleanVar(value=False)  # Manual F2
-        self.active_focus = 1  # 1 = Focus Point 1 (Tag/UWB), 2 = Focus Point 2 (Manuel)
+        self.focus1_active = True
+        self.focus2_active = False
         self.group_toggles = {i: True for i in range(1, 6)}
         fp2_grps = self.cfg.get("focus_point_2", {}).get("groups", {})
         self.group_toggles_2 = {i: bool(fp2_grps.get(str(i), False)) for i in range(1, 6)}
@@ -153,7 +157,31 @@ class Dashboard:
         self.ma2_targets = {}  # {gma_id: (pan, tilt, grp, manual_cmd)}
         self.ma2_clear_pending = False
         self.ma2_resend_manual_cmd = False
+        self.ma2_cmd_queue = []
         self.ma2_lock = threading.Lock()
+
+        # Presets par Focus Point (8 presets pour Focus 1, 8 presets pour Focus 2)
+        self.focus_presets = self.cfg.get("focus_presets", {})
+        for fp in ("1", "2"):
+            if fp not in self.focus_presets:
+                def_x = round(self.stage_w * 0.5, 2)
+                def_y = round(self.stage_d * 0.5, 2)
+                def_z = round(self.target_z if fp == "1" else self.fp2_z, 2)
+                self.focus_presets[fp] = [
+                    {"label": f"P{i+1}", "x": def_x, "y": def_y, "z": def_z, "empty": True}
+                    for i in range(8)
+                ]
+            else:
+                while len(self.focus_presets[fp]) < 8:
+                    i = len(self.focus_presets[fp])
+                    def_x = round(self.stage_w * 0.5, 2)
+                    def_y = round(self.stage_d * 0.5, 2)
+                    def_z = round(self.target_z if fp == "1" else self.fp2_z, 2)
+                    self.focus_presets[fp].append(
+                        {"label": f"P{i+1}", "x": def_x, "y": def_y, "z": def_z, "empty": True}
+                    )
+        self.focus_current_color = self.cfg.get("focus_colors", {"1": "#FFFFFF", "2": "#FFFFFF"})
+        self.preset_save_mode = False
 
         # Battery monitoring
         self.bat_voltage = 0.0
@@ -167,34 +195,77 @@ class Dashboard:
         self._start_remote_listener()
         self._tick()
 
-    def _load_config(self):
+    def _load_config(self, filepath=None):
+        target = filepath or CONFIG_FILE
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(target, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
 
-    def _save_config(self):
-        """Sauvegarde la config courante (scène, anchors, fixtures) dans config.json."""
-        # Charger le fichier existant pour préserver les champs non gérés
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+    def _dump_config_data(self, target_path=None):
+        """Génère la structure JSON complète à partir des paramètres en cours."""
+        target = target_path or self.current_config_file
+        existing = {}
+        if os.path.exists(target):
+            try:
+                with open(target, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
 
-        # Mettre à jour les champs gérés par le dashboard
-        data["stage"] = {"width": self.stage_w, "depth": self.stage_d, "height": self.stage_h}
+        data = existing if isinstance(existing, dict) else {}
+        if "_comment" not in data:
+            data["_comment"] = "SudShow Locator — Configuration PC"
+        if "_units" not in data:
+            data["_units"] = "Toutes les distances en mètres, angles en degrés"
+
+        # Synchroniser les dimensions de scène depuis les entries si présentes
+        try:
+            if hasattr(self, 'entry_w') and self.entry_w.get():
+                self.stage_w = float(self.entry_w.get())
+            if hasattr(self, 'entry_d') and self.entry_d.get():
+                self.stage_d = float(self.entry_d.get())
+            if hasattr(self, 'entry_h') and self.entry_h.get():
+                self.stage_h = float(self.entry_h.get())
+        except ValueError:
+            pass
+
+        data["stage"] = {
+            "width": round(self.stage_w, 2),
+            "depth": round(self.stage_d, 2),
+            "height": round(self.stage_h, 2)
+        }
+
+        # Calibration & Z des anchors
+        cal = self.cfg.get("calibration", {}) if isinstance(self.cfg.get("calibration"), dict) else {}
+        try:
+            if hasattr(self, 'cal_entries') and len(self.cal_entries) >= 3:
+                for i in range(3):
+                    cal[f"a{i}"] = float(self.cal_entries[i][0].get())
+                    self.anchors[i][2] = float(self.cal_entries[i][1].get())
+            if hasattr(self, 'ent_alpha') and self.ent_alpha.get():
+                cal["alpha"] = float(self.ent_alpha.get())
+            if hasattr(self, 'ent_tag_z') and self.ent_tag_z.get():
+                cal["tag_z"] = float(self.ent_tag_z.get())
+        except ValueError:
+            pass
+        data["calibration"] = cal
+
         data["anchors"] = {
             f"a{i}": {"x": round(a[0], 2), "y": round(a[1], 2), "z": round(a[2], 2)}
             for i, a in enumerate(self.anchors)
         }
-        # Mettre à jour les positions des fixtures
+
+        # Synchroniser les positions et paramètres des fixtures
         for i, fx in enumerate(self.fixtures):
             fx["x"] = round(fx["x"], 2)
             fx["y"] = round(fx["y"], 2)
+            if "visible" not in fx:
+                fx["visible"] = True
             try:
-                fx["gma_id"] = int(self.fx_ma2_entries[i].get())
+                if hasattr(self, 'fx_ma2_entries') and i < len(self.fx_ma2_entries):
+                    fx["gma_id"] = int(self.fx_ma2_entries[i].get())
             except:
                 pass
             try:
@@ -203,44 +274,314 @@ class Dashboard:
             except:
                 pass
         data["fixtures"] = self.fixtures
-        
+
         if hasattr(self, 'var_hide_anchors'):
             data["hide_anchors"] = self.var_hide_anchors.get()
-            
-        data["tracking"] = self.cfg.get("tracking", {})
+
+        data["tracking"] = self.cfg.get("tracking", {}) if isinstance(self.cfg.get("tracking"), dict) else {}
         data["tracking"]["target_height"] = round(self.target_z, 2)
 
         data["focus_point_1"] = {
             "x": round(self.display_x, 2),
             "y": round(self.display_y, 2),
         }
-        
+
         data["focus_point_2"] = {
             "x": round(self.fp2_x, 2),
             "y": round(self.fp2_y, 2),
             "z": round(self.fp2_z, 2),
-            "groups": {str(i): self.group_toggles_2[i] for i in range(1, 6)}
+            "groups": {str(i): self.group_toggles_2.get(i, False) for i in range(1, 6)}
         }
-        
-        data["calibration"] = self.cfg.get("calibration", {"a0": 0.8, "a1": 0.8, "a2": 0.8, "alpha": 0.85, "tag_z": 1.0})
-        
+
         # MA2
+        ma2 = self.cfg.get("ma2", {}) if isinstance(self.cfg.get("ma2"), dict) else {}
         try:
-            data["ma2"] = {
-                "ip": self.ent_ma2_ip.get(),
-                "port": int(self.ent_ma2_port.get()),
-                "user": self.ent_ma2_user.get(),
-                "pass": self.ent_ma2_pass.get()
-            }
-        except:
+            if hasattr(self, 'ent_ma2_ip') and self.ent_ma2_ip.get():
+                ma2["ip"] = self.ent_ma2_ip.get().strip()
+            if hasattr(self, 'ent_ma2_port') and self.ent_ma2_port.get():
+                ma2["port"] = int(self.ent_ma2_port.get().strip())
+            if hasattr(self, 'ent_ma2_user'):
+                ma2["user"] = self.ent_ma2_user.get().strip()
+            if hasattr(self, 'ent_ma2_pass'):
+                ma2["pass"] = self.ent_ma2_pass.get().strip()
+        except ValueError:
             pass
+        data["ma2"] = ma2
+
+        data["focus_presets"] = self.focus_presets
+        data["focus_colors"] = self.focus_current_color
+
+        return data
+
+    def _apply_config_data(self, data, source_name="config.json"):
+        """Applique l'ensemble d'une configuration chargée à la volée et rafraîchit l'interface."""
+        if not isinstance(data, dict):
+            return
+
+        # Scène
+        stage_cfg = data.get("stage", {})
+        if stage_cfg:
+            self.stage_w = float(stage_cfg.get("width", self.stage_w))
+            self.stage_d = float(stage_cfg.get("depth", self.stage_d))
+            self.stage_h = float(stage_cfg.get("height", self.stage_h))
+            if hasattr(self, 'entry_w'):
+                self.entry_w.delete(0, tk.END)
+                self.entry_w.insert(0, str(self.stage_w))
+            if hasattr(self, 'entry_d'):
+                self.entry_d.delete(0, tk.END)
+                self.entry_d.insert(0, str(self.stage_d))
+            if hasattr(self, 'entry_h'):
+                self.entry_h.delete(0, tk.END)
+                self.entry_h.insert(0, str(self.stage_h))
+
+        # Anchors
+        acfg = data.get("anchors", {})
+        if acfg:
+            self.anchors = [
+                [float(acfg.get("a0", {}).get("x", 0.0)),
+                 float(acfg.get("a0", {}).get("y", 0.0)),
+                 float(acfg.get("a0", {}).get("z", 2.0))],
+                [float(acfg.get("a1", {}).get("x", self.stage_w)),
+                 float(acfg.get("a1", {}).get("y", 0.0)),
+                 float(acfg.get("a1", {}).get("z", 2.0))],
+                [float(acfg.get("a2", {}).get("x", self.stage_w * 0.5)),
+                 float(acfg.get("a2", {}).get("y", self.stage_d)),
+                 float(acfg.get("a2", {}).get("z", 2.0))],
+            ]
+
+        # Calibration
+        cal = data.get("calibration", {})
+        if hasattr(self, 'cal_entries') and len(self.cal_entries) >= 3:
+            for i in range(3):
+                ent_off, ent_z = self.cal_entries[i]
+                ent_off.delete(0, tk.END)
+                ent_off.insert(0, str(cal.get(f"a{i}", 0.8)))
+                ent_z.delete(0, tk.END)
+                ent_z.insert(0, str(self.anchors[i][2]))
+        if hasattr(self, 'ent_alpha'):
+            self.ent_alpha.delete(0, tk.END)
+            self.ent_alpha.insert(0, str(cal.get("alpha", 0.85)))
+        if hasattr(self, 'ent_tag_z'):
+            self.ent_tag_z.delete(0, tk.END)
+            self.ent_tag_z.insert(0, str(cal.get("tag_z", 1.0)))
+
+        # Masquage des Anchors
+        if hasattr(self, 'var_hide_anchors'):
+            self.var_hide_anchors.set(bool(data.get("hide_anchors", False)))
+
+        # Fixtures
+        cfg_fixtures = data.get("fixtures", [])
+        if cfg_fixtures:
+            self.fixtures = copy.deepcopy(cfg_fixtures)
+            defaults_list = self._default_fixtures()
+            def_fx = defaults_list[0]
+            for fx in self.fixtures:
+                for k, v in def_fx.items():
+                    if k not in fx:
+                        fx[k] = v
+        else:
+            self.fixtures = self._default_fixtures()
+
+        if hasattr(self, 'frm_fixtures'):
+            self._build_fixtures_list()
+
+        # Tracking / Cible Z
+        self.target_z = float(data.get("tracking", {}).get("target_height", self.target_z))
+
+        # Focus Point 1
+        fp1_cfg = data.get("focus_point_1", {})
+        self.tag_x = float(fp1_cfg.get("x", round(self.stage_w * 0.5, 2)))
+        self.tag_y = float(fp1_cfg.get("y", round(self.stage_d * 0.5, 2)))
+        self.display_x = self.tag_x
+        self.display_y = self.tag_y
+
+        # Focus Point 2
+        fp2_cfg = data.get("focus_point_2", {})
+        self.fp2_x = float(fp2_cfg.get("x", round(self.stage_w * 0.5, 2)))
+        self.fp2_y = float(fp2_cfg.get("y", round(self.stage_d * 0.5, 2)))
+        self.fp2_z = float(fp2_cfg.get("z", 1.7))
+
+        fp2_grps = fp2_cfg.get("groups", {})
+        if fp2_grps:
+            self.group_toggles_2 = {i: bool(fp2_grps.get(str(i), False)) for i in range(1, 6)}
+            self.group_toggles = {i: True for i in range(1, 6)}
+            for i in range(1, 6):
+                if self.group_toggles_2[i]:
+                    self.group_toggles[i] = False
+                if hasattr(self, 'btn_groups') and hasattr(self, 'btn_groups_2'):
+                    self._update_group_btn_color(i, 1)
+                    self._update_group_btn_color(i, 2)
+
+        # Indicateur Z Top
+        if hasattr(self, 'lbl_z_top'):
+            cur_z = self.target_z if self.focus1_active else self.fp2_z
+            self.lbl_z_top.config(text=f"Z: {cur_z:.2f}m")
+
+        # GrandMA2
+        ma2_cfg = data.get("ma2", {})
+        if hasattr(self, 'ent_ma2_ip'):
+            self.ent_ma2_ip.delete(0, tk.END)
+            self.ent_ma2_ip.insert(0, ma2_cfg.get("ip", "127.0.0.1"))
+        if hasattr(self, 'ent_ma2_port'):
+            self.ent_ma2_port.delete(0, tk.END)
+            self.ent_ma2_port.insert(0, str(ma2_cfg.get("port", 30000)))
+        if hasattr(self, 'ent_ma2_user'):
+            self.ent_ma2_user.delete(0, tk.END)
+            self.ent_ma2_user.insert(0, ma2_cfg.get("user", "administrator"))
+        if hasattr(self, 'ent_ma2_pass'):
+            self.ent_ma2_pass.delete(0, tk.END)
+            self.ent_ma2_pass.insert(0, ma2_cfg.get("pass", "admin"))
+
+        # Presets Focus 1 et 2
+        raw_presets = data.get("focus_presets", {})
+        self.focus_presets = copy.deepcopy(raw_presets) if raw_presets else {}
+        for fp in ("1", "2"):
+            if fp not in self.focus_presets:
+                def_x = round(self.stage_w * 0.5, 2)
+                def_y = round(self.stage_d * 0.5, 2)
+                def_z = round(self.target_z if fp == "1" else self.fp2_z, 2)
+                self.focus_presets[fp] = [
+                    {"label": f"P{i+1}", "x": def_x, "y": def_y, "z": def_z, "empty": True}
+                    for i in range(8)
+                ]
+            else:
+                while len(self.focus_presets[fp]) < 8:
+                    i = len(self.focus_presets[fp])
+                    def_x = round(self.stage_w * 0.5, 2)
+                    def_y = round(self.stage_d * 0.5, 2)
+                    def_z = round(self.target_z if fp == "1" else self.fp2_z, 2)
+                    self.focus_presets[fp].append(
+                        {"label": f"P{i+1}", "x": def_x, "y": def_y, "z": def_z, "empty": True}
+                    )
+
+        if hasattr(self, 'focus_preset_buttons'):
+            for fp in (1, 2):
+                s_fp = str(fp)
+                if fp in self.focus_preset_buttons:
+                    for i, btn in enumerate(self.focus_preset_buttons[fp]):
+                        p_info = self.focus_presets[s_fp][i]
+                        lbl = p_info.get("label", f"P{i+1}")
+                        is_empty = p_info.get("empty", True)
+                        accent_col = C["tag"] if fp == 1 else C["tag2"]
+                        saved_bg = "#241618" if fp == 1 else "#0f2630"
+                        btn.config(
+                            text=lbl,
+                            bg=C["border"] if is_empty else saved_bg,
+                            fg=C["dim"] if is_empty else accent_col,
+                            font=("Segoe UI", 10, "bold")
+                        )
+
+        # Couleurs Focus 1 et 2
+        raw_colors = data.get("focus_colors", {"1": "#FFFFFF", "2": "#FFFFFF"})
+        self.focus_current_color = copy.deepcopy(raw_colors)
+        if hasattr(self, 'color_swatch_boxes'):
+            for fp in (1, 2):
+                cur_hex = self.focus_current_color.get(str(fp), "#FFFFFF").upper()
+                if fp in self.color_swatch_boxes:
+                    for s_box, (_, s_hex, _) in zip(self.color_swatch_boxes[fp], self.COLOR_SWATCHES):
+                        if s_hex.upper() == cur_hex:
+                            hl = "#00d4ff" if s_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF"
+                            s_box.config(bg=hl)
+                        else:
+                            s_box.config(bg=C["canvas_bg"])
+
+        # Reset drag & trail
+        self._dragging = False
+        self._drag_idx = -1
+        self.trail.clear()
+
+        self.cfg = data
+        self._draw()
+
+    def _save_config(self, filepath=None):
+        """Sauvegarde la config courante dans un fichier JSON (par défaut le fichier actif)."""
+        target = filepath or self.current_config_file
+        try:
+            data = self._dump_config_data(target)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+            self.current_config_file = target
+            self.cfg = data
+            filename = os.path.basename(target)
+            now_str = time.strftime("%H:%M:%S")
+            msg = f"{filename} (sauvegardé à {now_str})"
+            self._log(f"[CFG] ✓ Configuration sauvegardée dans {filename}")
+            if hasattr(self, 'lbl_cfg_status'):
+                self.lbl_cfg_status.config(text=msg, fg=C["ok"])
+            return True
+        except Exception as e:
+            err = f"✗ Erreur sauvegarde: {e}"
+            self._log(f"[CFG] {err}")
+            if hasattr(self, 'lbl_cfg_status'):
+                self.lbl_cfg_status.config(text=err, fg=C["bad"])
+            messagebox.showerror("Erreur sauvegarde", f"Impossible d'enregistrer la configuration :\n{e}")
+            return False
+
+    def _reload_config(self, filepath=None, confirm=True):
+        """Recharge la config depuis un fichier JSON (par défaut le fichier actif)."""
+        target = filepath or self.current_config_file
+        filename = os.path.basename(target)
+        if confirm:
+            ok = messagebox.askyesno(
+                "Recharger la configuration",
+                f"Voulez-vous recharger la configuration depuis '{filename}' ?\n\nToutes les modifications non enregistrées seront remplacées."
+            )
+            if not ok:
+                return False
+
+        if not os.path.exists(target):
+            err = f"✗ Fichier introuvable: {filename}"
+            self._log(f"[CFG] {err}")
+            if hasattr(self, 'lbl_cfg_status'):
+                self.lbl_cfg_status.config(text=err, fg=C["bad"])
+            messagebox.showerror("Fichier introuvable", f"Le fichier de configuration n'existe pas :\n{target}")
+            return False
 
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-            self._log("[CFG] ✓ Configuration sauvegardée")
+            with open(target, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.current_config_file = target
+            self._apply_config_data(data, source_name=filename)
+            now_str = time.strftime("%H:%M:%S")
+            msg = f"{filename} (rechargé à {now_str})"
+            self._log(f"[CFG] ✓ Configuration rechargée depuis {filename}")
+            if hasattr(self, 'lbl_cfg_status'):
+                self.lbl_cfg_status.config(text=msg, fg=C["accent"])
+            return True
         except Exception as e:
-            self._log(f"[CFG] ✗ Erreur sauvegarde: {e}")
+            err = f"✗ Erreur rechargement: {e}"
+            self._log(f"[CFG] {err}")
+            if hasattr(self, 'lbl_cfg_status'):
+                self.lbl_cfg_status.config(text=err, fg=C["bad"])
+            messagebox.showerror("Erreur rechargement", f"Impossible de charger la configuration :\n{e}")
+            return False
+
+    def _export_config_dialog(self):
+        """Ouvre un dialogue pour exporter la configuration courante sous un autre nom/chemin."""
+        cur_name = os.path.basename(self.current_config_file)
+        filepath = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Exporter la configuration sous...",
+            initialdir=os.path.dirname(self.current_config_file),
+            initialfile=cur_name,
+            defaultextension=".json",
+            filetypes=[("Fichiers JSON", "*.json"), ("Tous les fichiers", "*.*")]
+        )
+        if filepath:
+            if self._save_config(filepath):
+                messagebox.showinfo("Export réussi", f"Configuration exportée avec succès dans :\n{filepath}")
+
+    def _import_config_dialog(self):
+        """Ouvre un dialogue pour importer une configuration existante."""
+        filepath = filedialog.askopenfilename(
+            parent=self.root,
+            title="Importer une configuration...",
+            initialdir=os.path.dirname(self.current_config_file),
+            filetypes=[("Fichiers JSON", "*.json"), ("Tous les fichiers", "*.*")]
+        )
+        if filepath:
+            if self._reload_config(filepath, confirm=False):
+                messagebox.showinfo("Import réussi", f"Configuration importée et appliquée depuis :\n{filepath}")
 
     def _default_fixtures(self):
         """6 lyres centrées en fond de scène, réparties sur 60% de la largeur."""
@@ -253,6 +594,7 @@ class Dashboard:
             fxs.append({
                 "name": f"Lyre {i+1}",
                 "group": 1,
+                "visible": True,
                 "x": start_x + i * spacing,
                 "y": self.stage_d - 0.5,
                 "height": 4.0,
@@ -303,7 +645,20 @@ class Dashboard:
                                       command=lambda: self._toggle_manual(2))
         self.btn_manual_2.pack(side="left", padx=(6, 0))
 
-        # Bouton Vue X/Z dans la top bar (à côté du bouton Manual)
+        # Boutons Focus 1 et Focus 2 (actifs simultanément ou séparément)
+        self.btn_focus_1 = tk.Button(top, text="🎯 Focus 1", font=self.ft_large_btn,
+                                     bd=0, padx=12, pady=4, cursor="hand2",
+                                     command=lambda: self._toggle_focus(1))
+        self.btn_focus_1.pack(side="left", padx=(8, 0))
+
+        self.btn_focus_2 = tk.Button(top, text="🎯 Focus 2", font=self.ft_large_btn,
+                                     bd=0, padx=12, pady=4, cursor="hand2",
+                                     command=lambda: self._toggle_focus(2))
+        self.btn_focus_2.pack(side="left", padx=(4, 0))
+
+        self._update_focus_buttons()
+
+        # Bouton Vue X/Z dans la top bar (à côté des boutons Focus)
         self.btn_toggle_front = tk.Button(top, text="📐 Vue X/Z", font=self.ft_large_btn,
                                           bg=C["border"], fg=C["accent"], bd=0, padx=16, pady=4,
                                           activebackground=C["accent"], activeforeground="#000",
@@ -330,37 +685,46 @@ class Dashboard:
                                   command=lambda: self._adjust_target_z(0.25))
         self.btn_z_up.pack(side="left", padx=(4, 0))
 
-        # Boutons de toggle (Panneau & Logs) empilés à droite
+        # Boutons de toggle (Presets, Panneau & Logs) empilés à droite
         toggle_frame = tk.Frame(top, bg=C["panel"])
         toggle_frame.pack(side="right", padx=8)
-        
-        self.btn_toggle_panel = tk.Button(toggle_frame, text="[>] Panneau", font=("Segoe UI", 8, "bold"),
-                                          bg=C["border"], fg=C["text"], bd=0, width=12,
-                                          activebackground=C["accent"], activeforeground="#000",
-                                          cursor="hand2",
-                                          command=self._toggle_right_panel)
-        self.btn_toggle_panel.pack(side="top", pady=(0, 2))
-        
-        self.btn_toggle_log = tk.Button(toggle_frame, text="[+] Logs ESP32", font=("Segoe UI", 8, "bold"),
+
+        col_left = tk.Frame(toggle_frame, bg=C["panel"])
+        col_left.pack(side="left", padx=(0, 4))
+        self.btn_toggle_presets = tk.Button(col_left, text="[<] Presets", font=("Segoe UI", 8, "bold"),
+                                            bg=C["border"], fg=C["accent"], bd=0, width=12,
+                                            activebackground=C["accent"], activeforeground="#000",
+                                            cursor="hand2", command=self._toggle_left_panel)
+        self.btn_toggle_presets.pack(side="top", pady=(0, 2))
+
+        self.btn_toggle_log = tk.Button(col_left, text="[+] Logs ESP32", font=("Segoe UI", 8, "bold"),
                                           bg=C["border"], fg=C["text"], bd=0, width=12,
                                           activebackground=C["accent"], activeforeground="#000",
                                           cursor="hand2",
                                           command=self._toggle_log_panel)
         self.btn_toggle_log.pack(side="top")
 
+        col_right = tk.Frame(toggle_frame, bg=C["panel"])
+        col_right.pack(side="left")
+        self.btn_toggle_panel = tk.Button(col_right, text="[>] Panneau", font=("Segoe UI", 8, "bold"),
+                                          bg=C["border"], fg=C["text"], bd=0, width=12,
+                                          activebackground=C["accent"], activeforeground="#000",
+                                          cursor="hand2",
+                                          command=self._toggle_right_panel)
+        self.btn_toggle_panel.pack(side="top", pady=(0, 2))
+
+        self.btn_quick_save = tk.Button(col_right, text="💾 Sauver Cfg", font=("Segoe UI", 8, "bold"),
+                                        bg=C["border"], fg=C["ok"], bd=0, width=12,
+                                        activebackground=C["ok"], activeforeground="#000",
+                                        cursor="hand2",
+                                        command=self._save_config)
+        self.btn_quick_save.pack(side="top")
 
 
-        # Frame pour les boutons de groupes (2 lignes : FP1 et FP2) et sélection du focus actif
+
+        # Frame pour les boutons de groupes (2 lignes : FP1 et FP2)
         grp_container = tk.Frame(top, bg=C["panel"])
         grp_container.pack(side="right", padx=(16, 8))
-
-        # Bouton de sélection du Focus Point actif (à gauche des 2 lignes de groupes)
-        self.btn_active_focus = tk.Button(grp_container, text="🎯 Focus 1", font=self.ft_large_btn,
-                                          bg=C["tag"], fg="#fff", bd=0, padx=12, pady=4,
-                                          activebackground="#ff6666", activeforeground="#fff",
-                                          cursor="hand2",
-                                          command=self._toggle_active_focus)
-        self.btn_active_focus.pack(side="left", padx=(0, 8), fill="y")
 
         grp_rows = tk.Frame(grp_container, bg=C["panel"])
         grp_rows.pack(side="left")
@@ -425,21 +789,26 @@ class Dashboard:
                                     font=self.ft_label, bg=C["panel"], fg=C["dim"])
         self.lbl_status.pack(side="right", padx=8)
 
-        # --- Main: left canvas + right panel ---
+        # --- Main: left preset panel + center canvas + right panel ---
         self.main_panes = tk.PanedWindow(self.root, orient="horizontal",
                                bg=C["bg"], bd=0, sashwidth=4)
         self.main_panes.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # Canvas frame
-        left = tk.Frame(self.main_panes, bg=C["bg"])
-        self.main_panes.add(left, stretch="always")
+        # Left panel (Presets & Couleurs)
+        self.left_panel = tk.Frame(self.main_panes, bg=C["panel"], width=340)
+        self.main_panes.add(self.left_panel, stretch="never")
+        self._build_left_panel()
+
+        # Canvas frame (center)
+        self.canvas_frame = tk.Frame(self.main_panes, bg=C["bg"])
+        self.main_panes.add(self.canvas_frame, stretch="always")
 
         # Right panel
         self.right_panel = tk.Frame(self.main_panes, bg=C["panel"], width=280)
         self.main_panes.add(self.right_panel, stretch="never")
 
         # --- Canvases ---
-        self.left_panes = tk.PanedWindow(left, orient="vertical", bg=C["border"], bd=0, sashwidth=4)
+        self.left_panes = tk.PanedWindow(self.canvas_frame, orient="vertical", bg=C["border"], bd=0, sashwidth=4)
         self.left_panes.pack(fill="both", expand=True)
 
         top_border = tk.Frame(self.left_panes, bg=C["border"], padx=2, pady=2)
@@ -473,14 +842,60 @@ class Dashboard:
                                  height=6)
         self.log_text.pack(fill="both", expand=True, padx=4, pady=2)
 
+        # Raccourcis clavier pour sauvegarder / recharger / importer
+        self.root.bind("<Control-s>", lambda e: self._save_config())
+        self.root.bind("<Control-S>", lambda e: self._save_config())
+        self.root.bind("<Control-o>", lambda e: self._import_config_dialog())
+        self.root.bind("<Control-O>", lambda e: self._import_config_dialog())
+        self.root.bind("<Control-r>", lambda e: self._reload_config())
+        self.root.bind("<Control-R>", lambda e: self._reload_config())
+
         # --- Right panel content ---
         self._build_panel(self.right_panel)
 
     def _build_panel(self, parent):
         parent.columnconfigure(0, weight=1)
 
-        # Stage size & Save (Moved from Top Bar)
-        self._section(parent, "📐 SCÈNE & SAUVEGARDE")
+        # CONFIGURATION
+        self._section(parent, "📁 CONFIGURATION")
+        cfg_frame = tk.Frame(parent, bg=C["panel"])
+        cfg_frame.pack(fill="x", padx=8, pady=2)
+
+        f_cfg_r1 = tk.Frame(cfg_frame, bg=C["panel"])
+        f_cfg_r1.pack(fill="x", pady=2)
+        btn_save = tk.Button(f_cfg_r1, text="💾 Sauvegarder", font=self.ft_label,
+                             bg=C["border"], fg=C["ok"], bd=0, padx=6, pady=3,
+                             activebackground=C["ok"], activeforeground="#000",
+                             cursor="hand2", command=self._save_config)
+        btn_save.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        btn_reload = tk.Button(f_cfg_r1, text="🔄 Recharger", font=self.ft_label,
+                               bg=C["border"], fg=C["accent"], bd=0, padx=6, pady=3,
+                               activebackground=C["accent"], activeforeground="#000",
+                               cursor="hand2", command=self._reload_config)
+        btn_reload.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        f_cfg_r2 = tk.Frame(cfg_frame, bg=C["panel"])
+        f_cfg_r2.pack(fill="x", pady=(2, 4))
+        btn_export = tk.Button(f_cfg_r2, text="📤 Exporter...", font=self.ft_small,
+                               bg=C["border"], fg=C["text"], bd=0, padx=4, pady=2,
+                               activebackground=C["dim"], activeforeground="#fff",
+                               cursor="hand2", command=self._export_config_dialog)
+        btn_export.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        btn_import = tk.Button(f_cfg_r2, text="📥 Importer...", font=self.ft_small,
+                               bg=C["border"], fg=C["text"], bd=0, padx=4, pady=2,
+                               activebackground=C["dim"], activeforeground="#fff",
+                               cursor="hand2", command=self._import_config_dialog)
+        btn_import.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        cfg_name = os.path.basename(self.current_config_file)
+        self.lbl_cfg_status = tk.Label(cfg_frame, text=f"{cfg_name} (prêt)",
+                                       font=("Segoe UI", 8), bg=C["panel"], fg=C["dim"])
+        self.lbl_cfg_status.pack(anchor="w", pady=(0, 2))
+
+        # DIMENSIONS SCÈNE (m)
+        self._section(parent, "📐 DIMENSIONS SCÈNE (m)")
         sz_frame = tk.Frame(parent, bg=C["panel"])
         sz_frame.pack(fill="x", padx=8, pady=2)
         
@@ -502,20 +917,12 @@ class Dashboard:
         self.entry_h.insert(0, str(self.stage_h))
         self.entry_h.pack(side="left", padx=1)
 
-        # Row 2: Buttons
-        f_btns = tk.Frame(sz_frame, bg=C["panel"])
-        f_btns.pack(fill="x", pady=4)
-        btn_apply = tk.Button(f_btns, text="Appliquer", font=self.ft_label,
-                               bg=C["border"], fg=C["text"], bd=0, padx=8,
+        # Row 2: Appliquer dimensions
+        btn_apply = tk.Button(sz_frame, text="Appliquer dimensions", font=self.ft_small,
+                               bg=C["border"], fg=C["text"], bd=0, padx=8, pady=2,
                                activebackground=C["accent"], activeforeground="#000",
-                               command=self._apply_stage_size)
-        btn_apply.pack(side="left", fill="x", expand=True, padx=(0, 2))
-        
-        btn_save = tk.Button(f_btns, text="💾 Sauver", font=self.ft_label,
-                              bg=C["border"], fg=C["ok"], bd=0, padx=8,
-                              activebackground=C["ok"], activeforeground="#000",
-                              command=self._save_config)
-        btn_save.pack(side="left", fill="x", expand=True, padx=(2, 0))
+                               cursor="hand2", command=self._apply_stage_size)
+        btn_apply.pack(fill="x", pady=4)
 
         # Position
         self._section(parent, "📍 POSITION")
@@ -659,7 +1066,7 @@ class Dashboard:
         top = tk.Toplevel(self.root)
         top.title(f"⚙️ {fx['name']}")
         top.configure(bg=C["bg"])
-        top.geometry("340x530")
+        top.geometry("340x560")
         top.transient(self.root)
         top.grab_set()
 
@@ -682,6 +1089,7 @@ class Dashboard:
             cb.pack(side="left")
             return var
 
+        v_vis = _check(top, "Visible sur le plan", "visible", True)
         e_h = _row(top, "Hauteur Z (m)", "height", 4.0)
         e_pmin = _row(top, "Pan Min (°)", "pan_min", 0.0)
         e_pmax = _row(top, "Pan Max (°)", "pan_max", 540.0)
@@ -717,6 +1125,7 @@ class Dashboard:
         
         def _save():
             try:
+                fx["visible"] = v_vis.get()
                 fx["height"] = float(e_h.get())
                 fx["pan_min"] = float(e_pmin.get())
                 fx["pan_max"] = float(e_pmax.get())
@@ -731,6 +1140,7 @@ class Dashboard:
                 with self.ma2_lock:
                     self.ma2_resend_manual_cmd = True
                 self._save_config()
+                self._build_fixtures_list()
                 self._draw()
                 top.destroy()
             except ValueError:
@@ -764,9 +1174,9 @@ class Dashboard:
             ("3. Lyre à roue de couleurs (Color1)",
              "Dimmer à 100% + roue de couleur à 0 (Blanc) :",
              'At 100 ; Attribute "Color1" At 0'),
-            ("4. Lyre LED RGB (ColorRGB1/2/3)",
-             "Dimmer à 100% + RGB à 100% (ou mettre At 0 si CMY pur) :",
-             'At 100 ; Attribute "ColorRGB1" At 100 ; Attribute "ColorRGB2" At 100 ; Attribute "ColorRGB3" At 100'),
+            ("4. Lyre LED RGB / RGBW (ColorRGB1/2/3/5)",
+             "Dimmer à 100% + RGB et White à 100% :",
+             'At 100 ; Attribute "ColorRGB1" At 100 ; Attribute "ColorRGB2" At 100 ; Attribute "ColorRGB3" At 100 ; Attribute "ColorRGB5" At 100'),
             ("5. Bloquer aussi un effet de Couleur / Dimmer en cours",
              "Coupe l'effet d'exécuteur sur Dimmer & Color puis force le blanc à 100% :",
              'Stomp PresetType "Dimmer" ; Stomp PresetType "Color"\nAt 100 ; PresetType "Color" At Default'),
@@ -833,8 +1243,11 @@ class Dashboard:
             ent_grp.pack(side="left", padx=4)
             self.fx_grp_entries.append(ent_grp)
             
-            tk.Label(f, text=f"{fx['name']}:", font=self.ft_small,
-                     bg=C["panel"], fg=C["fixture"]).pack(side="left")
+            is_vis = fx.get("visible", True)
+            name_fg = C["fixture"] if is_vis else C["dim"]
+            name_txt = f"{fx['name']}:" if is_vis else f"{fx['name']} (off):"
+            tk.Label(f, text=name_txt, font=self.ft_small,
+                     bg=C["panel"], fg=name_fg).pack(side="left")
             l = tk.Label(f, text="—", font=self.ft_small, bg=C["panel"], fg=C["dim"])
             l.pack(side="left", padx=4)
             self.fx_labels.append(l)
@@ -863,6 +1276,372 @@ class Dashboard:
         tk.Label(parent, text=text, font=self.ft_section,
                  bg=C["panel"], fg=C["accent"]).pack(anchor="w", padx=8)
 
+    def _build_left_panel(self):
+        # Header
+        top_f = tk.Frame(self.left_panel, bg=C["panel"], padx=8, pady=6)
+        top_f.pack(fill="x")
+
+        tk.Label(top_f, text="🎯 PRESETS & COULEURS", font=self.ft_section,
+                 bg=C["panel"], fg=C["accent"]).pack(anchor="w")
+
+        btn_row = tk.Frame(top_f, bg=C["panel"])
+        btn_row.pack(fill="x", pady=(6, 2))
+
+        self.btn_save_preset = tk.Button(btn_row, text="💾 Save to Preset",
+                                         font=("Segoe UI", 10, "bold"),
+                                         bg=C["border"], fg=C["text"], bd=0, padx=8, pady=5,
+                                         activebackground=C["accent"], activeforeground="#000",
+                                         cursor="hand2", command=self._toggle_save_preset_mode)
+        self.btn_save_preset.pack(fill="x")
+
+        self.lbl_save_hint = tk.Label(top_f, text="Cliquez sur un preset F1 ou F2 pour charger sa position",
+                                      font=("Segoe UI", 8), bg=C["panel"], fg=C["dim"], anchor="w")
+        self.lbl_save_hint.pack(fill="x")
+
+        tk.Frame(self.left_panel, bg=C["border"], height=1).pack(fill="x", padx=8, pady=(4, 6))
+
+        # Zone scrollable
+        cv = tk.Canvas(self.left_panel, bg=C["panel"], highlightthickness=0, width=320)
+        sb = tk.Scrollbar(self.left_panel, orient="vertical", command=cv.yview)
+        sf = tk.Frame(cv, bg=C["panel"])
+
+        sf.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv_win = cv.create_window((0, 0), window=sf, anchor="nw")
+        cv.bind("<Configure>", lambda e: cv.itemconfig(cv_win, width=e.width))
+        cv.configure(yscrollcommand=sb.set)
+
+        cv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        def _on_wheel(event):
+            cv.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        cv.bind("<Enter>", lambda e: cv.bind_all("<MouseWheel>", _on_wheel))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+
+        self.focus_preset_buttons = {1: [], 2: []}
+        self.color_swatch_btns = {1: [], 2: []}
+        self.color_swatch_boxes = {1: [], 2: []}
+
+        # 8 Couleurs standards (Nom, Hex, (R, G, B) 0-100)
+        self.COLOR_SWATCHES = [
+            ("Blanc",   "#FFFFFF", (100, 100, 100)),
+            ("Rouge",   "#FF3333", (100, 0, 0)),
+            ("Vert",    "#33FF33", (0, 100, 0)),
+            ("Bleu",    "#3366FF", (0, 0, 100)),
+            ("Jaune",   "#FFFF33", (100, 100, 0)),
+            ("Cyan",    "#33FFFF", (0, 100, 100)),
+            ("Magenta", "#FF33FF", (100, 0, 100)),
+            ("Orange",  "#FF8800", (100, 45, 0)),
+        ]
+
+        # --- SECTION FOCUS 1 ---
+        card_f1 = tk.Frame(sf, bg=C["canvas_bg"], highlightbackground=C["border"],
+                           highlightthickness=1, padx=6, pady=6)
+        card_f1.pack(fill="x", padx=8, pady=4)
+
+        hdr_f1 = tk.Frame(card_f1, bg=C["canvas_bg"])
+        hdr_f1.pack(fill="x", pady=(0, 4))
+        tk.Label(hdr_f1, text="🎯 PRESETS FOCUS 1", font=("Segoe UI", 10, "bold"),
+                 bg=C["canvas_bg"], fg=C["tag"]).pack(side="left")
+
+        grid_f1 = tk.Frame(card_f1, bg=C["canvas_bg"])
+        grid_f1.pack(fill="x", pady=2)
+        for c in range(4): grid_f1.grid_columnconfigure(c, weight=1, uniform="f1_p")
+        for r in range(2): grid_f1.grid_rowconfigure(r, weight=1, uniform="f1_p")
+
+        presets_1 = self.focus_presets.get("1", [])
+        for row in range(2):
+            for col in range(4):
+                idx = row * 4 + col
+                p_info = presets_1[idx] if idx < len(presets_1) else {"label": f"P{idx+1}", "empty": True}
+                lbl = p_info.get("label", f"P{idx+1}")
+                is_empty = p_info.get("empty", True)
+
+                btn = tk.Button(grid_f1, text=lbl, font=("Segoe UI", 10, "bold"),
+                                bg=C["border"] if is_empty else "#241618",
+                                fg=C["dim"] if is_empty else C["tag"],
+                                activebackground=C["tag"], activeforeground="#fff",
+                                bd=0, relief="flat", highlightthickness=0,
+                                height=2, pady=10, cursor="hand2",
+                                command=lambda i=idx: self._on_preset_click(1, i))
+                btn.bind("<Button-3>", lambda e, i=idx: self._save_focus_preset_dialog(1, i))
+                btn.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
+                self.focus_preset_buttons[1].append(btn)
+
+        col_hdr_f1 = tk.Frame(card_f1, bg=C["canvas_bg"])
+        col_hdr_f1.pack(fill="x", pady=(10, 4))
+        tk.Label(col_hdr_f1, text="🎨 COULEURS FOCUS 1", font=("Segoe UI", 10, "bold"),
+                 bg=C["canvas_bg"], fg=C["tag"]).pack(side="left")
+
+        grid_col1 = tk.Frame(card_f1, bg=C["canvas_bg"])
+        grid_col1.pack(fill="x", pady=2)
+        for c in range(4): grid_col1.grid_columnconfigure(c, weight=1, uniform="f1_c")
+        for r in range(2): grid_col1.grid_rowconfigure(r, weight=1, uniform="f1_c")
+
+        cur_col1 = self.focus_current_color.get("1", "#FFFFFF").upper()
+        for row in range(2):
+            for col in range(4):
+                idx = row * 4 + col
+                c_name, c_hex, c_rgb = self.COLOR_SWATCHES[idx]
+                is_selected = (c_hex.upper() == cur_col1)
+                hl = ("#00d4ff" if c_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF") if is_selected else C["canvas_bg"]
+
+                box = tk.Frame(grid_col1, bg=hl, padx=3, pady=3, cursor="hand2")
+                box.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
+                box.bind("<Button-1>", lambda e, name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(1, name, hx, rgb))
+
+                swatch = tk.Button(box, text="", bg=c_hex, activebackground=c_hex,
+                                   bd=0, relief="flat", highlightthickness=0,
+                                   height=2, pady=10, cursor="hand2",
+                                   command=lambda name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(1, name, hx, rgb))
+                swatch.pack(fill="both", expand=True)
+
+                self.color_swatch_boxes[1].append(box)
+                self.color_swatch_btns[1].append(swatch)
+
+        # --- SECTION FOCUS 2 ---
+        card_f2 = tk.Frame(sf, bg=C["canvas_bg"], highlightbackground=C["border"],
+                           highlightthickness=1, padx=6, pady=6)
+        card_f2.pack(fill="x", padx=8, pady=4)
+
+        hdr_f2 = tk.Frame(card_f2, bg=C["canvas_bg"])
+        hdr_f2.pack(fill="x", pady=(0, 4))
+        tk.Label(hdr_f2, text="🎯 PRESETS FOCUS 2", font=("Segoe UI", 10, "bold"),
+                 bg=C["canvas_bg"], fg=C["tag2"]).pack(side="left")
+
+        grid_f2 = tk.Frame(card_f2, bg=C["canvas_bg"])
+        grid_f2.pack(fill="x", pady=2)
+        for c in range(4): grid_f2.grid_columnconfigure(c, weight=1, uniform="f2_p")
+        for r in range(2): grid_f2.grid_rowconfigure(r, weight=1, uniform="f2_p")
+
+        presets_2 = self.focus_presets.get("2", [])
+        for row in range(2):
+            for col in range(4):
+                idx = row * 4 + col
+                p_info = presets_2[idx] if idx < len(presets_2) else {"label": f"P{idx+1}", "empty": True}
+                lbl = p_info.get("label", f"P{idx+1}")
+                is_empty = p_info.get("empty", True)
+
+                btn = tk.Button(grid_f2, text=lbl, font=("Segoe UI", 10, "bold"),
+                                bg=C["border"] if is_empty else "#0f2630",
+                                fg=C["dim"] if is_empty else C["tag2"],
+                                activebackground=C["tag2"], activeforeground="#000",
+                                bd=0, relief="flat", highlightthickness=0,
+                                height=2, pady=10, cursor="hand2",
+                                command=lambda i=idx: self._on_preset_click(2, i))
+                btn.bind("<Button-3>", lambda e, i=idx: self._save_focus_preset_dialog(2, i))
+                btn.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
+                self.focus_preset_buttons[2].append(btn)
+
+        col_hdr_f2 = tk.Frame(card_f2, bg=C["canvas_bg"])
+        col_hdr_f2.pack(fill="x", pady=(10, 4))
+        tk.Label(col_hdr_f2, text="🎨 COULEURS FOCUS 2", font=("Segoe UI", 10, "bold"),
+                 bg=C["canvas_bg"], fg=C["tag2"]).pack(side="left")
+
+        grid_col2 = tk.Frame(card_f2, bg=C["canvas_bg"])
+        grid_col2.pack(fill="x", pady=2)
+        for c in range(4): grid_col2.grid_columnconfigure(c, weight=1, uniform="f2_c")
+        for r in range(2): grid_col2.grid_rowconfigure(r, weight=1, uniform="f2_c")
+
+        cur_col2 = self.focus_current_color.get("2", "#FFFFFF").upper()
+        for row in range(2):
+            for col in range(4):
+                idx = row * 4 + col
+                c_name, c_hex, c_rgb = self.COLOR_SWATCHES[idx]
+                is_selected = (c_hex.upper() == cur_col2)
+                hl = ("#00d4ff" if c_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF") if is_selected else C["canvas_bg"]
+
+                box = tk.Frame(grid_col2, bg=hl, padx=3, pady=3, cursor="hand2")
+                box.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
+                box.bind("<Button-1>", lambda e, name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(2, name, hx, rgb))
+
+                swatch = tk.Button(box, text="", bg=c_hex, activebackground=c_hex,
+                                   bd=0, relief="flat", highlightthickness=0,
+                                   height=2, pady=10, cursor="hand2",
+                                   command=lambda name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(2, name, hx, rgb))
+                swatch.pack(fill="both", expand=True)
+
+                self.color_swatch_boxes[2].append(box)
+                self.color_swatch_btns[2].append(swatch)
+
+    def _toggle_left_panel(self):
+        if str(self.left_panel) in [str(p) for p in self.main_panes.panes()]:
+            self.main_panes.forget(self.left_panel)
+            self.btn_toggle_presets.config(text="[>] Presets", fg=C["text"])
+        else:
+            self.main_panes.add(self.left_panel, before=self.canvas_frame, stretch="never")
+            self.btn_toggle_presets.config(text="[<] Presets", fg=C["accent"])
+        self._draw()
+
+    def _toggle_save_preset_mode(self, force_off=False):
+        if force_off:
+            self.preset_save_mode = False
+        else:
+            self.preset_save_mode = not self.preset_save_mode
+
+        if self.preset_save_mode:
+            self.btn_save_preset.config(text="⚠️ CHOIX DU PRESET...", bg="#cc8800", fg="#000")
+            self.lbl_save_hint.config(text="Cliquez sur un bouton P1-P8 pour y enregistrer la position", fg="#ffcc00")
+            self._log("[PRESET] Mode enregistrement actif : cliquez sur le preset F1 ou F2 à écraser")
+        else:
+            self.btn_save_preset.config(text="💾 Save to Preset", bg=C["border"], fg=C["text"])
+            self.lbl_save_hint.config(text="Cliquez sur un preset F1 ou F2 pour charger sa position", fg=C["dim"])
+
+    def _on_preset_click(self, fp, idx):
+        if self.preset_save_mode:
+            self._save_focus_preset_dialog(fp, idx)
+            self._toggle_save_preset_mode(force_off=True)
+        else:
+            self._recall_focus_preset(fp, idx)
+
+    def _save_focus_preset_dialog(self, fp, idx):
+        s_fp = str(fp)
+        p_info = self.focus_presets[s_fp][idx]
+        old_lbl = p_info.get("label", f"P{idx+1}")
+
+        label = simpledialog.askstring(
+            "Sauvegarder Preset",
+            f"Nom court pour le preset {idx+1} (Focus {fp}) :",
+            initialvalue=old_lbl if not p_info.get("empty", True) else f"P{idx+1}",
+            parent=self.root
+        )
+        if label is None:
+            return
+
+        label = label.strip()[:10]
+        if not label:
+            label = f"P{idx+1}"
+
+        if fp == 1:
+            cur_x = self.display_x
+            cur_y = self.display_y
+            cur_z = self.target_z
+        else:
+            cur_x = self.fp2_x
+            cur_y = self.fp2_y
+            cur_z = self.fp2_z
+
+        self.focus_presets[s_fp][idx] = {
+            "label": label,
+            "x": round(cur_x, 2),
+            "y": round(cur_y, 2),
+            "z": round(cur_z, 2),
+            "empty": False
+        }
+
+        btn = self.focus_preset_buttons[fp][idx]
+        btn.config(text=label,
+                   bg="#241618" if fp == 1 else "#0f2630",
+                   fg=C["tag"] if fp == 1 else C["tag2"],
+                   font=("Segoe UI", 10, "bold"))
+
+        self._save_config()
+        self._highlight_active_preset(fp, idx)
+        self._log(f"[PRESET] Focus {fp} P{idx+1} '{label}' sauvegardé à ({cur_x:.2f}m, {cur_y:.2f}m, Z={cur_z:.2f}m)")
+
+    def _recall_focus_preset(self, fp, idx):
+        s_fp = str(fp)
+        p_info = self.focus_presets[s_fp][idx]
+        if p_info.get("empty", True):
+            self._log(f"[PRESET] Focus {fp} P{idx+1} est vide — utilisez 'Save to Preset' pour enregistrer")
+            return
+
+        tx = p_info["x"]
+        ty = p_info["y"]
+        tz = p_info["z"]
+
+        if fp == 1:
+            self.tag_x = self.display_x = tx
+            self.tag_y = self.display_y = ty
+            self.target_z = tz
+            if hasattr(self, 'lbl_z_top') and self.focus1_active:
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m")
+        else:
+            self.fp2_x = tx
+            self.fp2_y = ty
+            self.fp2_z = tz
+            if hasattr(self, 'lbl_z_top') and self.focus2_active:
+                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m")
+
+        self._highlight_active_preset(fp, idx)
+        self._draw()
+        self._log(f"[PRESET] Focus {fp} -> '{p_info['label']}' ({tx:.2f}m, {ty:.2f}m, Z={tz:.2f}m)")
+
+    def _highlight_active_preset(self, fp, active_idx):
+        if fp not in self.focus_preset_buttons:
+            return
+        s_fp = str(fp)
+        presets = self.focus_presets[s_fp]
+        accent_col = C["tag"] if fp == 1 else C["tag2"]
+        saved_bg = "#241618" if fp == 1 else "#0f2630"
+        active_bg = "#772222" if fp == 1 else "#005577"
+        for i, btn in enumerate(self.focus_preset_buttons[fp]):
+            is_empty = presets[i].get("empty", True)
+            if i == active_idx:
+                btn.config(bg=active_bg, fg="#ffffff", font=("Segoe UI", 10, "bold"))
+            else:
+                btn.config(bg=C["border"] if is_empty else saved_bg,
+                           fg=C["dim"] if is_empty else accent_col,
+                           font=("Segoe UI", 10, "bold"))
+
+    def _apply_focus_color(self, fp, name, hex_code, rgb):
+        s_fp = str(fp)
+        self.focus_current_color[s_fp] = hex_code
+
+        # Mise à jour du cadre de sélection (zéro décalage de géométrie)
+        if fp in self.color_swatch_boxes:
+            for s_box, (_, s_hex, _) in zip(self.color_swatch_boxes[fp], self.COLOR_SWATCHES):
+                if s_hex.upper() == hex_code.upper():
+                    hl = "#00d4ff" if s_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF"
+                    s_box.config(bg=hl)
+                else:
+                    s_box.config(bg=C["canvas_bg"])
+
+        # Récupérer les lyres affectées à ce Focus
+        gids = []
+        for j, fx in enumerate(self.fixtures):
+            if not fx.get("visible", True):
+                continue
+            try:
+                if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
+                    fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
+            except:
+                pass
+            grp = fx.get("group", 1)
+            in_fp = self.group_toggles.get(grp, False) if fp == 1 else self.group_toggles_2.get(grp, False)
+            if in_fp:
+                try:
+                    gid = int(self.fx_ma2_entries[j].get())
+                except:
+                    gid = fx.get("gma_id", j + 1)
+                gids.append(gid)
+
+        if gids:
+            g_str = " + ".join(str(g) for g in sorted(gids))
+            r, g_val, b = rgb
+            if name == "Blanc":
+                cmd = (f'Fixture {g_str} Attribute "ColorRGB1" At 100 ; '
+                       f'Fixture {g_str} Attribute "ColorRGB2" At 100 ; '
+                       f'Fixture {g_str} Attribute "ColorRGB3" At 100 ; '
+                       f'Fixture {g_str} Attribute "ColorRGB5" At 100 ; '
+                       f'Fixture {g_str} PresetType "Color" At Default\r\n')
+            else:
+                cmd = (f'Fixture {g_str} Attribute "ColorRGB1" At {r} ; '
+                       f'Fixture {g_str} Attribute "ColorRGB2" At {g_val} ; '
+                       f'Fixture {g_str} Attribute "ColorRGB3" At {b} ; '
+                       f'Fixture {g_str} Attribute "ColorRGB5" At 0\r\n')
+
+            self._send_ma2_direct(cmd)
+            self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name}")
+        else:
+            self._log(f"[UI] Focus {fp} Couleur -> {name} (aucun groupe actif sur F{fp})")
+
+        self._save_config()
+
+    def _send_ma2_direct(self, cmd):
+        with self.ma2_lock:
+            self.ma2_cmd_queue.append(cmd)
+
     def _toggle_right_panel(self):
         if str(self.right_panel) in [str(p) for p in self.main_panes.panes()]:
             self.main_panes.forget(self.right_panel)
@@ -883,15 +1662,29 @@ class Dashboard:
             self.btn_toggle_front.config(bg=C["border"], fg=C["accent"])
         self._draw()
 
+    @property
+    def active_focus(self):
+        if self.focus2_active and not self.focus1_active:
+            return 2
+        return 1
+
     def _adjust_target_z(self, delta):
-        if self.active_focus == 2:
+        if self.focus1_active and self.focus2_active:
+            val = round(max(-1.0, min(self.stage_h + 2.0, self.target_z + delta)), 2)
+            self.target_z = val
+            self.fp2_z = val
+            if hasattr(self, 'lbl_z_top'):
+                self.lbl_z_top.config(text=f"Z: {val:.2f}m", fg=C["accent"])
+            if hasattr(self, 'lbl_z'):
+                self.lbl_z.config(text=f"{self.target_z:.3f} m")
+        elif self.focus2_active:
             self.fp2_z = round(max(-1.0, min(self.stage_h + 2.0, self.fp2_z + delta)), 2)
             if hasattr(self, 'lbl_z_top'):
-                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m")
-        else:
+                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m", fg=C["tag2"])
+        elif self.focus1_active:
             self.target_z = round(max(-1.0, min(self.stage_h + 2.0, self.target_z + delta)), 2)
             if hasattr(self, 'lbl_z_top'):
-                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m")
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
             if hasattr(self, 'lbl_z'):
                 self.lbl_z.config(text=f"{self.target_z:.3f} m")
         self._save_config()
@@ -905,17 +1698,43 @@ class Dashboard:
             self.left_panes.add(self.log_frame, stretch="never")
             self.btn_toggle_log.config(text="[-] Logs ESP32")
 
-    def _toggle_active_focus(self):
-        self.active_focus = 2 if self.active_focus == 1 else 1
-        if self.active_focus == 1:
-            self.btn_active_focus.config(text="🎯 Focus 1", bg=C["tag"], fg="#fff", activebackground="#ff6666")
-            if hasattr(self, 'lbl_z_top'):
-                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
+    def _toggle_focus(self, fp):
+        if fp == 1:
+            self.focus1_active = not self.focus1_active
+            if not self.focus1_active and not self.focus2_active:
+                self.focus2_active = True
         else:
-            self.btn_active_focus.config(text="🎯 Focus 2", bg=C["tag2"], fg="#000", activebackground="#66ffff")
-            if hasattr(self, 'lbl_z_top'):
-                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m", fg=C["tag2"])
+            self.focus2_active = not self.focus2_active
+            if not self.focus1_active and not self.focus2_active:
+                self.focus1_active = True
+
+        self._update_focus_buttons()
         self._draw()
+
+    def _update_focus_buttons(self):
+        if self.focus1_active:
+            self.btn_focus_1.config(bg=C["tag"], fg="#fff", activebackground="#ff6666", activeforeground="#fff")
+        else:
+            self.btn_focus_1.config(bg=C["border"], fg=C["dim"], activebackground="#3a3a4e", activeforeground="#aaa")
+
+        if self.focus2_active:
+            self.btn_focus_2.config(bg=C["tag2"], fg="#000", activebackground="#66ffff", activeforeground="#000")
+        else:
+            self.btn_focus_2.config(bg=C["border"], fg=C["dim"], activebackground="#3a3a4e", activeforeground="#aaa")
+
+        if hasattr(self, 'lbl_z_top'):
+            if self.focus1_active and self.focus2_active:
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
+            elif self.focus2_active:
+                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m", fg=C["tag2"])
+            elif self.focus1_active:
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
+
+    def _toggle_active_focus(self):
+        if self.focus1_active and not self.focus2_active:
+            self._toggle_focus(2)
+        else:
+            self._toggle_focus(1)
 
     def _toggle_group(self, grp, fp=1):
         if fp == 1:
@@ -1086,13 +1905,15 @@ class Dashboard:
             return (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
 
         fp1_has_groups = any(self.group_toggles.values())
-        show_fp1 = fp1_has_groups or self.active_focus == 1 or self.connected
+        show_fp1 = fp1_has_groups or self.focus1_active or self.connected
         fp2_has_groups = any(self.group_toggles_2.values())
-        show_fp2 = fp2_has_groups or self.active_focus == 2
+        show_fp2 = fp2_has_groups or self.focus2_active
 
         # Beams (dessinés en 2 passes : focus inactif en arrière-plan atténué, puis focus actif au premier plan)
         for pass_active in (False, True):
             for fx in self.fixtures:
+                if not fx.get("visible", True):
+                    continue
                 grp = fx.get("group", 1)
                 in_fp1 = self.group_toggles.get(grp, False)
                 in_fp2 = self.group_toggles_2.get(grp, False)
@@ -1105,7 +1926,7 @@ class Dashboard:
                 else:
                     continue
 
-                is_active_fp = (fp_num == self.active_focus)
+                is_active_fp = (fp_num == 1 and self.focus1_active) or (fp_num == 2 and self.focus2_active)
                 if is_active_fp != pass_active:
                     continue
 
@@ -1169,6 +1990,8 @@ class Dashboard:
 
         # Fixtures
         for i, fx in enumerate(self.fixtures):
+            if not fx.get("visible", True):
+                continue
             fxx, fxy_z = get_fx_pos(fx)
             fxp, fyp, _ = s2p(fxx, fxy_z)
             r = 14
@@ -1196,9 +2019,14 @@ class Dashboard:
                 cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
         # Focus Points (F1 & F2) : dessiner d'abord l'inactif (en transparence), puis l'actif au premier plan
+        tx1, ty1_z = get_tag_pos()
+        tx2, ty2_z = get_fp2_pos()
+        are_superposed = (show_fp1 and show_fp2 and math.hypot(tx1 - tx2, ty1_z - ty2_z) < 0.20)
+
         def draw_focus_point(fp_num, tx, ty_z, is_active):
             txp, typ, _ = s2p(tx, ty_z)
             if fp_num == 1:
+                lbl_x = txp - 13 if are_superposed else txp
                 if is_active:
                     for gr in [28, 20, 14]:
                         intensity = int(30 * (28 - gr) / 14)
@@ -1208,7 +2036,7 @@ class Dashboard:
                     cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag"], outline="#ff8888", width=2)
                     cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag"], width=1)
                     cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag"], width=1)
-                    cv.create_text(txp, typ - 18, text="F1", fill=C["tag"], font=("Segoe UI", 8, "bold"))
+                    cv.create_text(lbl_x, typ - 18, text="F1", fill=C["tag"], font=("Segoe UI", 8, "bold"))
                     cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["text"], font=("Consolas", 9, "bold"))
                 else:
                     cv.create_oval(txp - 16, typ - 16, txp + 16, typ + 16, outline="#26121e", width=1)
@@ -1216,9 +2044,10 @@ class Dashboard:
                     cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill="#5c202a", outline="#7a333d", width=1)
                     cv.create_line(txp - 11, typ, txp + 11, typ, fill="#5c202a", width=1)
                     cv.create_line(txp, typ - 11, txp, typ + 11, fill="#5c202a", width=1)
-                    cv.create_text(txp, typ - 16, text="F1", fill="#7a3842", font=("Segoe UI", 8))
+                    cv.create_text(lbl_x, typ - 16, text="F1", fill="#7a3842", font=("Segoe UI", 8))
                     cv.create_text(txp, typ + 19, text=f"({tx:.2f}, {ty_z:.2f})", fill="#605060", font=("Consolas", 8))
             else:
+                lbl_x = txp + 13 if are_superposed else txp
                 if is_active:
                     for gr in [28, 20, 14]:
                         intensity = int(30 * (28 - gr) / 14)
@@ -1228,7 +2057,7 @@ class Dashboard:
                     cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag2"], outline="#88ffff", width=2)
                     cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag2"], width=1)
                     cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag2"], width=1)
-                    cv.create_text(txp, typ - 18, text="F2", fill=C["tag2"], font=("Segoe UI", 8, "bold"))
+                    cv.create_text(lbl_x, typ - 18, text="F2", fill=C["tag2"], font=("Segoe UI", 8, "bold"))
                     cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["tag2"], font=("Consolas", 9, "bold"))
                 else:
                     cv.create_oval(txp - 16, typ - 16, txp + 16, typ + 16, outline="#0e2434", width=1)
@@ -1236,14 +2065,14 @@ class Dashboard:
                     cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill="#105266", outline="#247388", width=1)
                     cv.create_line(txp - 11, typ, txp + 11, typ, fill="#105266", width=1)
                     cv.create_line(txp, typ - 11, txp, typ + 11, fill="#105266", width=1)
-                    cv.create_text(txp, typ - 16, text="F2", fill="#287388", font=("Segoe UI", 8))
+                    cv.create_text(lbl_x, typ - 16, text="F2", fill="#287388", font=("Segoe UI", 8))
                     cv.create_text(txp, typ + 19, text=f"({tx:.2f}, {ty_z:.2f})", fill="#406878", font=("Consolas", 8))
 
         for pass_active in (False, True):
-            if show_fp2 and (self.active_focus == 2) == pass_active:
+            if show_fp2 and (self.focus2_active == pass_active):
                 tx2, ty2_z = get_fp2_pos()
                 draw_focus_point(2, tx2, ty2_z, pass_active)
-            if show_fp1 and (self.active_focus == 1) == pass_active:
+            if show_fp1 and (self.focus1_active == pass_active):
                 tx1, ty1_z = get_tag_pos()
                 draw_focus_point(1, tx1, ty1_z, pass_active)
 
@@ -1266,6 +2095,8 @@ class Dashboard:
                 best_idx = i
 
         for i, fx in enumerate(self.fixtures):
+            if not fx.get("visible", True):
+                continue
             fxx, fxy_z = (fx["x"], fx["y"]) if view == "top" else (fx["x"], fx["height"])
             px, py, _ = self._s2p(fxx, fxy_z, cv, view)
             d = math.hypot(event.x - px, event.y - py)
@@ -1274,19 +2105,36 @@ class Dashboard:
                 best_type = "fixture"
                 best_idx = i
 
-        if self.active_focus == 1:
-            tx, ty_z = (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+        tx1, ty1_z = (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+        tx2, ty2_z = (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
+
+        px1, py1, _ = self._s2p(tx1, ty1_z, cv, view)
+        d_f1 = math.hypot(event.x - px1, event.y - py1)
+
+        px2, py2, _ = self._s2p(tx2, ty2_z, cv, view)
+        d_f2 = math.hypot(event.x - px2, event.y - py2)
+
+        if self.focus1_active and self.focus2_active:
+            min_d = min(d_f1, d_f2)
+            if min_d < 25 and min_d < best_dist:
+                best_dist = min_d
+                best_type = "both_tags"
+                best_idx = -1
+            active_tag_type = "both_tags"
+        elif self.focus2_active:
+            if d_f2 < 25 and d_f2 < best_dist:
+                best_dist = d_f2
+                best_type = "tag2"
+                best_idx = -1
+            active_tag_type = "tag2"
+        elif self.focus1_active:
+            if d_f1 < 25 and d_f1 < best_dist:
+                best_dist = d_f1
+                best_type = "tag"
+                best_idx = -1
             active_tag_type = "tag"
         else:
-            tx, ty_z = (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
-            active_tag_type = "tag2"
-
-        px, py, _ = self._s2p(tx, ty_z, cv, view)
-        d = math.hypot(event.x - px, event.y - py)
-        if d < 25 and d < best_dist:
-            best_dist = d
-            best_type = active_tag_type
-            best_idx = -1
+            active_tag_type = None
 
         if best_type:
             self._drag_type = best_type
@@ -1294,7 +2142,7 @@ class Dashboard:
             self._dragging = True
             self._drag_view = view
             cv.config(cursor="fleur")
-        else:
+        elif active_tag_type:
             self._drag_type = active_tag_type
             self._dragging = True
             self._drag_view = view
@@ -1325,6 +2173,29 @@ class Dashboard:
                 self.fixtures[self._drag_idx]["y"] = sy
             else:
                 self.fixtures[self._drag_idx]["height"] = sy
+        elif self._drag_type == "both_tags":
+            uwb_live = (time.time() - self.last_uwb_pkt < 3.0) and not self.test_mode.get()
+            if not uwb_live:
+                self.tag_x = sx
+                self.display_x = sx
+            self.fp2_x = sx
+            if self.test_mode.get():
+                self.connected = True
+                self.last_pkt = time.time()
+                self.tag_q = 1.0
+
+            if view == "top":
+                if not uwb_live:
+                    self.tag_y = sy
+                    self.display_y = sy
+                self.fp2_y = sy
+            elif view == "front":
+                self.target_z = sy
+                self.fp2_z = sy
+                if hasattr(self, 'lbl_z_top'):
+                    self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
+                if hasattr(self, 'lbl_z'):
+                    self.lbl_z.config(text=f"{self.target_z:.3f} m")
         elif self._drag_type == "tag":
             uwb_live = (time.time() - self.last_uwb_pkt < 3.0) and not self.test_mode.get()
             if not uwb_live:
@@ -1340,8 +2211,8 @@ class Dashboard:
                 self.display_y = sy
             elif view == "front":
                 self.target_z = sy
-                if hasattr(self, 'lbl_z_top') and self.active_focus == 1:
-                    self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m")
+                if hasattr(self, 'lbl_z_top') and self.focus1_active:
+                    self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
                 if hasattr(self, 'lbl_z'):
                     self.lbl_z.config(text=f"{self.target_z:.3f} m")
         elif self._drag_type == "tag2":
@@ -1350,8 +2221,8 @@ class Dashboard:
                 self.fp2_y = sy
             elif view == "front":
                 self.fp2_z = sy
-                if hasattr(self, 'lbl_z_top') and self.active_focus == 2:
-                    self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m")
+                if hasattr(self, 'lbl_z_top') and self.focus2_active:
+                    self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m", fg=C["tag2"])
 
         self._draw()
 
@@ -1360,7 +2231,7 @@ class Dashboard:
             self._dragging = False
             self.canvas_top.config(cursor="crosshair")
             self.canvas_front.config(cursor="crosshair")
-            if self._drag_type in ["anchor", "fixture", "tag", "tag2"]:
+            if self._drag_type in ["anchor", "fixture", "tag", "tag2", "both_tags"]:
                 self._save_config()
                 self._log(f"[UI] Déplacé {self._drag_type}")
 
@@ -1665,6 +2536,17 @@ class Dashboard:
                         resend_manual = self.ma2_resend_manual_cmd
                         self.ma2_resend_manual_cmd = False
                         targets = list(self.ma2_targets.items())
+                        direct_cmds = list(self.ma2_cmd_queue)
+                        self.ma2_cmd_queue.clear()
+
+                    # Commandes directes (couleurs, etc.)
+                    if direct_cmds:
+                        for d_cmd in direct_cmds:
+                            try:
+                                s.sendall(d_cmd.encode("utf-8"))
+                            except Exception as e:
+                                self._log(f"[MA2] ✗ Erreur envoi commande directe: {e}")
+                                break
 
                     if resend_manual:
                         manual_sent_gids.clear()
@@ -2003,8 +2885,13 @@ class Dashboard:
 
         # Panel updates
         if hasattr(self, 'lbl_z_top'):
-            cur_z = self.fp2_z if self.active_focus == 2 else self.target_z
-            self.lbl_z_top.config(text=f"Z: {cur_z:.2f}m")
+            if self.focus2_active and not self.focus1_active:
+                cur_z = self.fp2_z
+                col_z = C["tag2"]
+            else:
+                cur_z = self.target_z
+                col_z = C["accent"]
+            self.lbl_z_top.config(text=f"Z: {cur_z:.2f}m", fg=col_z)
 
         self.lbl_x.config(text=f"{self.display_x:.3f} m")
         self.lbl_y.config(text=f"{self.display_y:.3f} m")
@@ -2083,11 +2970,14 @@ class Dashboard:
                 status_col = C["text"]
                 
             if j < len(self.fx_labels):
-                self.fx_labels[j].config(
-                    text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
+                if not fx.get("visible", True):
+                    self.fx_labels[j].config(text="(masquée)", fg=C["dim"])
+                else:
+                    self.fx_labels[j].config(
+                        text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
                     
-            # Store for MA2 Telnet thread (only when this fixture's focus point is active)
-            if active_for_ma2:
+            # Store for MA2 Telnet thread (only when this fixture is visible and its focus point is active)
+            if active_for_ma2 and fx.get("visible", True):
                 try:
                     gma_id = int(self.fx_ma2_entries[j].get())
                 except:

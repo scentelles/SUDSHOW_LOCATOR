@@ -302,7 +302,7 @@
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
-        "target_height": 0.5
+        "target_height": 1.3
     },
     "calibration": {
         "a0": 0.7,
@@ -319,19 +319,480 @@
     },
     "hide_anchors": true,
     "focus_point_2": {
-        "x": 7.5,
-        "y": 1.3,
+        "x": 7.7,
+        "y": 1.2,
         "z": 1.2,
         "groups": {
             "1": false,
             "2": true,
-            "3": false,
-            "4": false,
-            "5": false
+            "3": true,
+            "4": true,
+            "5": true
         }
     },
     "focus_point_1": {
-        "x": 5.8,
+        "x": 2.5,
         "y": 1.3
+    },
+    "group_presets": {
+        "1": [
+            {
+                "label": "popo",
+                "x": 1.7,
+                "y": 1.1,
+                "z": 0.5,
+                "fp": 1,
+                "empty": false
+            },
+            {
+                "label": "P2",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P3",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            }
+        ],
+        "2": [
+            {
+                "label": "P1",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P2",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P3",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            }
+        ],
+        "3": [
+            {
+                "label": "P1",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P2",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P3",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            }
+        ],
+        "4": [
+            {
+                "label": "P1",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P2",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P3",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            }
+        ],
+        "5": [
+            {
+                "label": "P1",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P2",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P3",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.5,
+                "fp": 1,
+                "empty": true
+            }
+        ]
+    },
+    "group_colors": {
+        "1": "#FF33FF",
+        "2": "#3366FF",
+        "3": "#33FFFF",
+        "4": "#FF33FF",
+        "5": "#3366FF"
+    },
+    "focus_presets": {
+        "1": [
+            {
+                "label": "Batteur",
+                "x": 5.0,
+                "y": 1.2,
+                "z": 1.3,
+                "empty": false
+            },
+            {
+                "label": "dsfsdfsdfs",
+                "x": 5.0,
+                "y": 1.2,
+                "z": 1.3,
+                "empty": false
+            },
+            {
+                "label": "sdfsdfsdfs",
+                "x": 5.0,
+                "y": 1.2,
+                "z": 1.3,
+                "empty": false
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.8,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.8,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.8,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.8,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 0.8,
+                "empty": true
+            }
+        ],
+        "2": [
+            {
+                "label": "P1",
+                "x": 8.8,
+                "y": 1.0,
+                "z": 1.2,
+                "empty": false
+            },
+            {
+                "label": "P2",
+                "x": 1.2,
+                "y": 1.1,
+                "z": 1.2,
+                "empty": false
+            },
+            {
+                "label": "P3",
+                "x": 7.5,
+                "y": 1.2,
+                "z": 1.2,
+                "empty": false
+            },
+            {
+                "label": "P4",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 1.2,
+                "empty": true
+            },
+            {
+                "label": "P5",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 1.2,
+                "empty": true
+            },
+            {
+                "label": "P6",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 1.2,
+                "empty": true
+            },
+            {
+                "label": "P7",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 1.2,
+                "empty": true
+            },
+            {
+                "label": "P8",
+                "x": 5.0,
+                "y": 2.5,
+                "z": 1.2,
+                "empty": true
+            }
+        ]
+    },
+    "focus_colors": {
+        "1": "#FFFFFF",
+        "2": "#FF3333"
     }
 }
