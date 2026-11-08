@@ -224,7 +224,7 @@
         "update_rate_hz": 20,
         "smoothing_factor": 0.3,
         "dead_zone_deg": 0.5,
-        "target_height": 1.3
+        "target_height": 1.25
     },
     "calibration": {
         "a0": 0.7,
@@ -239,5 +239,17 @@
         "user": "administrator",
         "pass": "admin"
     },
-    "hide_anchors": true
+    "hide_anchors": true,
+    "focus_point_2": {
+        "x": 5.3,
+        "y": 2.4,
+        "z": 1.2,
+        "groups": {
+            "1": false,
+            "2": false,
+            "3": false,
+            "4": false,
+            "5": false
+        }
+    }
 }

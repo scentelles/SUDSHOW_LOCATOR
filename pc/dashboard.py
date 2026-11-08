@@ -34,6 +34,7 @@ C = {
     "anchor_bg":   "#1a4060",
     "tag":         "#ff4444",
     "tag_glow":    "#331111",
+    "tag2":        "#00e5ff",
     "fixture":     "#ffd740",
     "fixture_bg":  "#4a3a00",
     "beam":        "#665520",
@@ -64,6 +65,10 @@ class Dashboard:
         self.stage_d = self.cfg.get("stage", {}).get("depth", 5.0)
         self.stage_h = self.cfg.get("stage", {}).get("height", 3.0)
         self.target_z = self.cfg.get("tracking", {}).get("target_height", 1.7)
+        fp2_cfg = self.cfg.get("focus_point_2", {})
+        self.fp2_x = fp2_cfg.get("x", self.stage_w * 0.5)
+        self.fp2_y = fp2_cfg.get("y", self.stage_d * 0.5)
+        self.fp2_z = fp2_cfg.get("z", 1.7)
 
         # Anchors [(x,y,z), ...]
         acfg = self.cfg.get("anchors", {})
@@ -99,6 +104,7 @@ class Dashboard:
         self.pkt_rate = 0.0
         self.connected = False
         self.last_pkt = 0.0
+        self.last_uwb_pkt = 0.0
         self._rate_n = 0
         self._rate_t = time.time()
         self.trail = collections.deque(maxlen=120)
@@ -128,14 +134,22 @@ class Dashboard:
         self.ft_small = tkfont.Font(family="Consolas", size=9)
         self.ft_log = tkfont.Font(family="Consolas", size=8)
         self.ft_large_btn = tkfont.Font(family="Segoe UI", size=14, weight="bold")
+        self.ft_grp_btn = tkfont.Font(family="Segoe UI", size=9, weight="bold")
         
         self.test_mode = tk.BooleanVar(value=False)
+        self.active_focus = 1  # 1 = Focus Point 1 (Tag/UWB), 2 = Focus Point 2 (Manuel)
         self.group_toggles = {i: True for i in range(1, 6)}
+        fp2_grps = self.cfg.get("focus_point_2", {}).get("groups", {})
+        self.group_toggles_2 = {i: bool(fp2_grps.get(str(i), False)) for i in range(1, 6)}
+        for i in range(1, 6):
+            if self.group_toggles_2[i]:
+                self.group_toggles[i] = False
 
         # Telnet MA2 state
         self.ma2_socket = None
         self.ma2_connected = False
-        self.ma2_targets = {}  # {gma_id: (pan, tilt)}
+        self.ma2_targets = {}  # {gma_id: (pan, tilt, grp)}
+        self.ma2_clear_pending = False
         self.ma2_lock = threading.Lock()
 
         # Battery monitoring
@@ -192,6 +206,13 @@ class Dashboard:
             
         data["tracking"] = self.cfg.get("tracking", {})
         data["tracking"]["target_height"] = round(self.target_z, 2)
+        
+        data["focus_point_2"] = {
+            "x": round(self.fp2_x, 2),
+            "y": round(self.fp2_y, 2),
+            "z": round(self.fp2_z, 2),
+            "groups": {str(i): self.group_toggles_2[i] for i in range(1, 6)}
+        }
         
         data["calibration"] = self.cfg.get("calibration", {"a0": 0.8, "a1": 0.8, "a2": 0.8, "alpha": 0.85, "tag_z": 1.0})
         
@@ -265,8 +286,33 @@ class Dashboard:
                                     cursor="hand2",
                                     command=self._toggle_manual)
         self.btn_manual.pack(side="left", padx=(8, 0))
-        
 
+        # Bouton Vue X/Z dans la top bar (à côté du bouton Manual)
+        self.btn_toggle_front = tk.Button(top, text="📐 Vue X/Z", font=self.ft_large_btn,
+                                          bg=C["border"], fg=C["accent"], bd=0, padx=16, pady=4,
+                                          activebackground=C["accent"], activeforeground="#000",
+                                          cursor="hand2",
+                                          command=self._toggle_front_panel)
+        self.btn_toggle_front.pack(side="left", padx=(8, 0))
+
+        # Contrôle rapide Z (toujours visible dans la top bar)
+        self.z_ctrl_frame = tk.Frame(top, bg=C["panel"])
+        self.z_ctrl_frame.pack(side="left", padx=(8, 0))
+        self.btn_z_down = tk.Button(self.z_ctrl_frame, text="▼ Z-", font=self.ft_large_btn,
+                                    bg=C["border"], fg=C["text"], bd=0, padx=10, pady=4,
+                                    activebackground=C["accent"], activeforeground="#000",
+                                    cursor="hand2",
+                                    command=lambda: self._adjust_target_z(-0.25))
+        self.btn_z_down.pack(side="left", padx=(0, 4))
+        self.lbl_z_top = tk.Label(self.z_ctrl_frame, text=f"Z: {self.target_z:.2f}m",
+                                  font=self.ft_value, bg=C["panel"], fg=C["accent"], width=9)
+        self.lbl_z_top.pack(side="left", padx=2)
+        self.btn_z_up = tk.Button(self.z_ctrl_frame, text="▲ Z+", font=self.ft_large_btn,
+                                  bg=C["border"], fg=C["text"], bd=0, padx=10, pady=4,
+                                  activebackground=C["accent"], activeforeground="#000",
+                                  cursor="hand2",
+                                  command=lambda: self._adjust_target_z(0.25))
+        self.btn_z_up.pack(side="left", padx=(4, 0))
 
         # Boutons de toggle (Panneau & Logs) empilés à droite
         toggle_frame = tk.Frame(top, bg=C["panel"])
@@ -288,19 +334,46 @@ class Dashboard:
 
 
 
-        # Frame pour les boutons de groupes alignés à droite
-        grp_frame = tk.Frame(top, bg=C["panel"])
-        grp_frame.pack(side="right", padx=(16, 8))
-        
-        # Boutons de groupes G1-G5
+        # Frame pour les boutons de groupes (2 lignes : FP1 et FP2) et sélection du focus actif
+        grp_container = tk.Frame(top, bg=C["panel"])
+        grp_container.pack(side="right", padx=(16, 8))
+
+        # Bouton de sélection du Focus Point actif (à gauche des 2 lignes de groupes)
+        self.btn_active_focus = tk.Button(grp_container, text="🎯 Focus 1", font=self.ft_large_btn,
+                                          bg=C["tag"], fg="#fff", bd=0, padx=12, pady=4,
+                                          activebackground="#ff6666", activeforeground="#fff",
+                                          cursor="hand2",
+                                          command=self._toggle_active_focus)
+        self.btn_active_focus.pack(side="left", padx=(0, 8), fill="y")
+
+        grp_rows = tk.Frame(grp_container, bg=C["panel"])
+        grp_rows.pack(side="left")
+
+        # Ligne 1 : Focus Point 1 (G1-G5)
+        grp_frame1 = tk.Frame(grp_rows, bg=C["panel"])
+        grp_frame1.pack(side="top", pady=(0, 2))
+        tk.Label(grp_frame1, text="F1:", font=self.ft_grp_btn, bg=C["panel"], fg=C["tag"], width=3, anchor="e").pack(side="left", padx=(0, 4))
         self.btn_groups = {}
         for i in range(1, 6):
-            btn = tk.Button(grp_frame, text=f"G{i}", font=self.ft_large_btn,
-                            bd=0, padx=16, pady=4, cursor="hand2",
-                            command=lambda grp=i: self._toggle_group(grp))
+            btn = tk.Button(grp_frame1, text=f"G{i}", font=self.ft_grp_btn,
+                            bd=0, padx=10, pady=1, cursor="hand2",
+                            command=lambda grp=i: self._toggle_group(grp, 1))
             btn.pack(side="left", padx=(0, 4) if i < 5 else 0)
             self.btn_groups[i] = btn
-            self._update_group_btn_color(i)
+            self._update_group_btn_color(i, 1)
+
+        # Ligne 2 : Focus Point 2 (G1-G5)
+        grp_frame2 = tk.Frame(grp_rows, bg=C["panel"])
+        grp_frame2.pack(side="top")
+        tk.Label(grp_frame2, text="F2:", font=self.ft_grp_btn, bg=C["panel"], fg=C["tag2"], width=3, anchor="e").pack(side="left", padx=(0, 4))
+        self.btn_groups_2 = {}
+        for i in range(1, 6):
+            btn = tk.Button(grp_frame2, text=f"G{i}", font=self.ft_grp_btn,
+                            bd=0, padx=10, pady=1, cursor="hand2",
+                            command=lambda grp=i: self._toggle_group(grp, 2))
+            btn.pack(side="left", padx=(0, 4) if i < 5 else 0)
+            self.btn_groups_2[i] = btn
+            self._update_group_btn_color(i, 2)
 
         # --- Bandeau du bas ---
         bot = tk.Frame(self.root, bg=C["panel"], pady=2, padx=12)
@@ -362,9 +435,9 @@ class Dashboard:
         self.canvas_top.bind("<B1-Motion>", lambda e: self._on_drag(e, "top"))
         self.canvas_top.bind("<ButtonRelease-1>", self._on_release)
 
-        front_border = tk.Frame(self.left_panes, bg=C["border"], padx=2, pady=2)
-        self.left_panes.add(front_border, stretch="always")
-        self.canvas_front = tk.Canvas(front_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
+        self.front_border = tk.Frame(self.left_panes, bg=C["border"], padx=2, pady=2)
+        self.left_panes.add(self.front_border, stretch="always")
+        self.canvas_front = tk.Canvas(self.front_border, bg=C["canvas_bg"], highlightthickness=0, cursor="crosshair")
         self.canvas_front.pack(fill="both", expand=True)
         self.canvas_front.bind("<Configure>", lambda e: self._draw())
         self.canvas_front.bind("<ButtonPress-1>", lambda e: self._on_press(e, "front"))
@@ -698,6 +771,32 @@ class Dashboard:
             self.main_panes.add(self.right_panel, stretch="never")
             self.btn_toggle_panel.config(text="[>] Panneau")
 
+    def _toggle_front_panel(self):
+        if str(self.front_border) in [str(p) for p in self.left_panes.panes()]:
+            self.left_panes.forget(self.front_border)
+            self.btn_toggle_front.config(bg="#555555", fg="#ccc")
+        else:
+            if str(self.log_frame) in [str(p) for p in self.left_panes.panes()]:
+                self.left_panes.add(self.front_border, before=self.log_frame, stretch="always")
+            else:
+                self.left_panes.add(self.front_border, stretch="always")
+            self.btn_toggle_front.config(bg=C["border"], fg=C["accent"])
+        self._draw()
+
+    def _adjust_target_z(self, delta):
+        if self.active_focus == 2:
+            self.fp2_z = round(max(-1.0, min(self.stage_h + 2.0, self.fp2_z + delta)), 2)
+            if hasattr(self, 'lbl_z_top'):
+                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m")
+        else:
+            self.target_z = round(max(-1.0, min(self.stage_h + 2.0, self.target_z + delta)), 2)
+            if hasattr(self, 'lbl_z_top'):
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m")
+            if hasattr(self, 'lbl_z'):
+                self.lbl_z.config(text=f"{self.target_z:.3f} m")
+        self._save_config()
+        self._draw()
+
     def _toggle_log_panel(self):
         if str(self.log_frame) in [str(p) for p in self.left_panes.panes()]:
             self.left_panes.forget(self.log_frame)
@@ -706,14 +805,42 @@ class Dashboard:
             self.left_panes.add(self.log_frame, stretch="never")
             self.btn_toggle_log.config(text="[-] Logs ESP32")
 
-    def _toggle_group(self, grp):
-        self.group_toggles[grp] = not self.group_toggles[grp]
-        self._update_group_btn_color(grp)
+    def _toggle_active_focus(self):
+        self.active_focus = 2 if self.active_focus == 1 else 1
+        if self.active_focus == 1:
+            self.btn_active_focus.config(text="🎯 Focus 1", bg=C["tag"], fg="#fff", activebackground="#ff6666")
+            if hasattr(self, 'lbl_z_top'):
+                self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m", fg=C["accent"])
+        else:
+            self.btn_active_focus.config(text="🎯 Focus 2", bg=C["tag2"], fg="#000", activebackground="#66ffff")
+            if hasattr(self, 'lbl_z_top'):
+                self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m", fg=C["tag2"])
         self._draw()
 
-    def _update_group_btn_color(self, grp):
-        btn = self.btn_groups[grp]
-        if self.group_toggles[grp]:
+    def _toggle_group(self, grp, fp=1):
+        if fp == 1:
+            self.group_toggles[grp] = not self.group_toggles[grp]
+            if self.group_toggles[grp] and self.group_toggles_2.get(grp, False):
+                self.group_toggles_2[grp] = False
+                self._update_group_btn_color(grp, 2)
+            self._update_group_btn_color(grp, 1)
+        else:
+            self.group_toggles_2[grp] = not self.group_toggles_2[grp]
+            if self.group_toggles_2[grp] and self.group_toggles.get(grp, False):
+                self.group_toggles[grp] = False
+                self._update_group_btn_color(grp, 1)
+            self._update_group_btn_color(grp, 2)
+        self._save_config()
+        self._draw()
+
+    def _update_group_btn_color(self, grp, fp=1):
+        if fp == 1:
+            btn = self.btn_groups[grp]
+            active = self.group_toggles[grp]
+        else:
+            btn = self.btn_groups_2[grp]
+            active = self.group_toggles_2[grp]
+        if active:
             col = self._get_group_color(grp)
             btn.config(bg=col, activebackground=col, fg="#000")
         else:
@@ -742,18 +869,23 @@ class Dashboard:
             
         cw = self.canvas_top.winfo_width()
         ch_top = self.canvas_top.winfo_height()
-        ch_front = self.canvas_front.winfo_height()
         
         ml, mt, mr, mb = self._margins()
         dw = cw - ml - mr
         dh_top = max(1, ch_top - mt - mb)
-        dh_front = max(1, ch_front - mt - mb)
         
         scx = dw / max(self.stage_w, 0.5)
         scy_top = dh_top / max(self.stage_d, 0.5)
-        scy_front = dh_front / max(self.stage_h, 0.5)
         
-        scale = min(scx, scy_top, scy_front)
+        front_visible = hasattr(self, 'front_border') and str(self.front_border) in [str(p) for p in self.left_panes.panes()]
+        if front_visible:
+            ch_front = self.canvas_front.winfo_height()
+            dh_front = max(1, ch_front - mt - mb)
+            scy_front = dh_front / max(self.stage_h, 0.5)
+            scale = min(scx, scy_top, scy_front)
+        else:
+            scale = min(scx, scy_top)
+            
         ox = ml + (dw - self.stage_w * scale) / 2
         return scale, ox
 
@@ -850,15 +982,44 @@ class Dashboard:
         def get_tag_pos():
             return (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
 
-        # Beams
-        if self.connected:
-            tx, ty_z = get_tag_pos()
-            txp, typ, _ = s2p(tx, ty_z)
+        def get_fp2_pos():
+            return (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
+
+        fp2_has_groups = any(self.group_toggles_2.values())
+        show_fp2 = fp2_has_groups or (self.test_mode.get() and self.active_focus == 2)
+
+        # Beams (dessinés en 2 passes : focus inactif en arrière-plan atténué, puis focus actif au premier plan)
+        for pass_active in (False, True):
             for fx in self.fixtures:
                 grp = fx.get("group", 1)
-                if not self.group_toggles.get(grp, True):
+                in_fp1 = self.group_toggles.get(grp, False)
+                in_fp2 = self.group_toggles_2.get(grp, False)
+                if in_fp2 and show_fp2:
+                    fp_num = 2
+                    tx, ty_z = get_fp2_pos()
+                elif in_fp1 and self.connected:
+                    fp_num = 1
+                    tx, ty_z = get_tag_pos()
+                else:
                     continue
-                    
+
+                is_active_fp = (fp_num == self.active_focus)
+                if is_active_fp != pass_active:
+                    continue
+
+                if is_active_fp:
+                    beam_fill_col = "#0a1e28" if fp_num == 2 else C["beam_fill"]
+                    beam_out_col = "#18667a" if fp_num == 2 else C["beam"]
+                    beam_line_col = C["tag2"] if fp_num == 2 else C["fixture"]
+                    dash_pat = (6, 4)
+                else:
+                    # Effet transparence (atténué sur le fond sombre)
+                    beam_fill_col = "#0d1422" if fp_num == 2 else "#121118"
+                    beam_out_col = "#143042" if fp_num == 2 else "#2e281c"
+                    beam_line_col = "#185a6a" if fp_num == 2 else "#5a4d22"
+                    dash_pat = (3, 6)
+
+                txp, typ, _ = s2p(tx, ty_z)
                 fxx, fxy_z = get_fx_pos(fx)
                 fxp, fyp, _ = s2p(fxx, fxy_z)
                 dx = txp - fxp
@@ -872,9 +1033,9 @@ class Dashboard:
                     fxp, fyp,
                     txp + perp_x, typ + perp_y,
                     txp - perp_x, typ - perp_y,
-                    fill=C["beam_fill"], outline=C["beam"], width=1
+                    fill=beam_fill_col, outline=beam_out_col, width=1
                 )
-                cv.create_line(fxp, fyp, txp, typ, fill=C["fixture"], width=1, dash=(6, 4))
+                cv.create_line(fxp, fyp, txp, typ, fill=beam_line_col, width=1, dash=dash_pat)
 
         # Distance lines from anchors
         hide_a = getattr(self, 'var_hide_anchors', None) and self.var_hide_anchors.get()
@@ -910,7 +1071,7 @@ class Dashboard:
             fxp, fyp, _ = s2p(fxx, fxy_z)
             r = 14
             grp = fx.get("group", 1)
-            is_active = self.group_toggles.get(grp, True)
+            is_active = self.group_toggles.get(grp, False) or self.group_toggles_2.get(grp, False)
             grp_col = self._get_group_color(grp) if is_active else C["dim"]
             bg_col = C["fixture_bg"] if is_active else C["panel"]
             text_col = C["fixture"] if is_active else C["dim"]
@@ -932,21 +1093,57 @@ class Dashboard:
                 cv.create_text(apx, apy - 24, text=f"A{i}", fill=C["anchor"], font=("Segoe UI", 10, "bold"))
                 cv.create_text(apx, apy + 24, text=f"({ax:.1f},{ay_z:.1f})", fill=C["dim"], font=("Consolas", 7))
 
-        # Tag
-        if self.connected:
-            tx, ty_z = get_tag_pos()
+        # Focus Points (F1 & F2) : dessiner d'abord l'inactif (en transparence), puis l'actif au premier plan
+        def draw_focus_point(fp_num, tx, ty_z, is_active):
             txp, typ, _ = s2p(tx, ty_z)
+            if fp_num == 1:
+                if is_active:
+                    for gr in [28, 20, 14]:
+                        intensity = int(30 * (28 - gr) / 14)
+                        gcol = f"#{50 + intensity:02x}{10:02x}{10:02x}"
+                        cv.create_oval(txp - gr, typ - gr, txp + gr, typ + gr, outline=gcol, width=1)
+                    r = 9
+                    cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag"], outline="#ff8888", width=2)
+                    cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag"], width=1)
+                    cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag"], width=1)
+                    cv.create_text(txp, typ - 18, text="F1", fill=C["tag"], font=("Segoe UI", 8, "bold"))
+                    cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["text"], font=("Consolas", 9, "bold"))
+                else:
+                    cv.create_oval(txp - 16, typ - 16, txp + 16, typ + 16, outline="#26121e", width=1)
+                    r = 7
+                    cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill="#5c202a", outline="#7a333d", width=1)
+                    cv.create_line(txp - 11, typ, txp + 11, typ, fill="#5c202a", width=1)
+                    cv.create_line(txp, typ - 11, txp, typ + 11, fill="#5c202a", width=1)
+                    cv.create_text(txp, typ - 16, text="F1", fill="#7a3842", font=("Segoe UI", 8))
+                    cv.create_text(txp, typ + 19, text=f"({tx:.2f}, {ty_z:.2f})", fill="#605060", font=("Consolas", 8))
+            else:
+                if is_active:
+                    for gr in [28, 20, 14]:
+                        intensity = int(30 * (28 - gr) / 14)
+                        gcol = f"#{10:02x}{40 + intensity:02x}{50 + intensity:02x}"
+                        cv.create_oval(txp - gr, typ - gr, txp + gr, typ + gr, outline=gcol, width=1)
+                    r = 9
+                    cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag2"], outline="#88ffff", width=2)
+                    cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag2"], width=1)
+                    cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag2"], width=1)
+                    cv.create_text(txp, typ - 18, text="F2", fill=C["tag2"], font=("Segoe UI", 8, "bold"))
+                    cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["tag2"], font=("Consolas", 9, "bold"))
+                else:
+                    cv.create_oval(txp - 16, typ - 16, txp + 16, typ + 16, outline="#0e2434", width=1)
+                    r = 7
+                    cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill="#105266", outline="#247388", width=1)
+                    cv.create_line(txp - 11, typ, txp + 11, typ, fill="#105266", width=1)
+                    cv.create_line(txp, typ - 11, txp, typ + 11, fill="#105266", width=1)
+                    cv.create_text(txp, typ - 16, text="F2", fill="#287388", font=("Segoe UI", 8))
+                    cv.create_text(txp, typ + 19, text=f"({tx:.2f}, {ty_z:.2f})", fill="#406878", font=("Consolas", 8))
 
-            for gr in [28, 20, 14]:
-                intensity = int(30 * (28 - gr) / 14)
-                gcol = f"#{50 + intensity:02x}{10:02x}{10:02x}"
-                cv.create_oval(txp - gr, typ - gr, txp + gr, typ + gr, outline=gcol, width=1)
-
-            r = 9
-            cv.create_oval(txp - r, typ - r, txp + r, typ + r, fill=C["tag"], outline="#ff8888", width=2)
-            cv.create_line(txp - 14, typ, txp + 14, typ, fill=C["tag"], width=1)
-            cv.create_line(txp, typ - 14, txp, typ + 14, fill=C["tag"], width=1)
-            cv.create_text(txp, typ + 22, text=f"({tx:.2f}, {ty_z:.2f})", fill=C["text"], font=("Consolas", 9, "bold"))
+        for pass_active in (False, True):
+            if show_fp2 and (self.active_focus == 2) == pass_active:
+                tx2, ty2_z = get_fp2_pos()
+                draw_focus_point(2, tx2, ty2_z, pass_active)
+            if self.connected and (self.active_focus == 1) == pass_active:
+                tx1, ty1_z = get_tag_pos()
+                draw_focus_point(1, tx1, ty1_z, pass_active)
 
     # =========================================================================
     # DRAG & DROP
@@ -975,13 +1172,19 @@ class Dashboard:
                 best_type = "fixture"
                 best_idx = i
 
-        tx, ty_z = (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+        if self.active_focus == 1:
+            tx, ty_z = (self.display_x, self.display_y) if view == "top" else (self.display_x, self.target_z)
+            active_tag_type = "tag"
+        else:
+            tx, ty_z = (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
+            active_tag_type = "tag2"
+
         px, py, _ = self._s2p(tx, ty_z, cv, view)
         d = math.hypot(event.x - px, event.y - py)
         if d < 25 and d < best_dist:
             if view == "front" or self.test_mode.get():
                 best_dist = d
-                best_type = "tag"
+                best_type = active_tag_type
                 best_idx = -1
 
         if best_type:
@@ -991,7 +1194,7 @@ class Dashboard:
             self._drag_view = view
             cv.config(cursor="fleur")
         elif self.test_mode.get() or view == "front":
-            self._drag_type = "tag"
+            self._drag_type = active_tag_type
             self._dragging = True
             self._drag_view = view
             self._on_drag(event, view)
@@ -1034,6 +1237,19 @@ class Dashboard:
                 self.display_y = sy
             elif view == "front":
                 self.target_z = sy
+                if hasattr(self, 'lbl_z_top') and self.active_focus == 1:
+                    self.lbl_z_top.config(text=f"Z: {self.target_z:.2f}m")
+                if hasattr(self, 'lbl_z'):
+                    self.lbl_z.config(text=f"{self.target_z:.3f} m")
+        elif self._drag_type == "tag2":
+            if self.test_mode.get():
+                self.fp2_x = sx
+            if view == "top" and self.test_mode.get():
+                self.fp2_y = sy
+            elif view == "front":
+                self.fp2_z = sy
+                if hasattr(self, 'lbl_z_top') and self.active_focus == 2:
+                    self.lbl_z_top.config(text=f"Z: {self.fp2_z:.2f}m")
 
         self._draw()
 
@@ -1042,7 +1258,7 @@ class Dashboard:
             self._dragging = False
             self.canvas_top.config(cursor="crosshair")
             self.canvas_front.config(cursor="crosshair")
-            if self._drag_type in ["anchor", "fixture", "tag"]:
+            if self._drag_type in ["anchor", "fixture", "tag", "tag2"]:
                 self._save_config()
                 self._log(f"[UI] Déplacé {self._drag_type}")
 
@@ -1068,6 +1284,9 @@ class Dashboard:
                     fx["x"] = fx["x"] * new_w / old_w
                     fx["y"] = fx["y"] * new_d / old_d
                     fx["height"] = fx["height"] * new_h / old_h
+                self.fp2_x = self.fp2_x * new_w / old_w
+                self.fp2_y = self.fp2_y * new_d / old_d
+                self.fp2_z = self.fp2_z * new_h / old_h
                 self.stage_w = new_w
                 self.stage_d = new_d
                 self.stage_h = new_h
@@ -1237,6 +1456,12 @@ class Dashboard:
         else:
             self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual")
             self._log("[UI] Mode manuel désactivé")
+            # Si aucun paquet UWB réel récent, repasser en non-connecté pour ne pas renvoyer la position manuelle
+            if time.time() - self.last_uwb_pkt > 3.0:
+                self.connected = False
+            with self.ma2_lock:
+                self.ma2_targets.clear()
+                self.ma2_clear_pending = True
             
     def _telnet_loop(self):
         while True:
@@ -1286,18 +1511,38 @@ class Dashboard:
                         s.setblocking(True)
                     
                     with self.ma2_lock:
+                        clear_req = self.ma2_clear_pending
+                        self.ma2_clear_pending = False
                         targets = list(self.ma2_targets.items())
+
+                    if clear_req:
+                        try:
+                            s.sendall(b"ClearAll\r\n")
+                            last_cmd = ""
+                            self._log("[MA2] ✓ ClearAll envoyé (retour aux valeurs console)")
+                        except Exception as e:
+                            self._log(f"[MA2] ✗ Erreur envoi ClearAll: {e}")
+                            break
+                        continue
                         
                     if not targets:
                         continue
                         
-                    # Build MA2 command
+                    # Build MA2 command (une ligne par groupe pour ne pas dépasser la limite Telnet MA2)
                     # Correct syntax to avoid "Error: Fixture X": Fixture X Attribute "Pan" At Y ; Fixture X Attribute "Tilt" At Z
-                    parts = []
-                    for gid, (pan, tilt) in targets:
-                        parts.append(f'Fixture {gid} Attribute "Pan" At {pan:.1f} ; Fixture {gid} Attribute "Tilt" At {tilt:.1f}')
+                    groups_cmd = {}
+                    for gid, val in targets:
+                        if len(val) == 3:
+                            pan, tilt, grp = val
+                        else:
+                            pan, tilt = val
+                            grp = 1
+                        groups_cmd.setdefault(grp, []).append(
+                            f'Fixture {gid} Attribute "Pan" At {pan:.1f} ; Fixture {gid} Attribute "Tilt" At {tilt:.1f}'
+                        )
                         
-                    cmd = " ; ".join(parts) + "\r\n"
+                    lines = [" ; ".join(parts) for grp, parts in sorted(groups_cmd.items())]
+                    cmd = "\r\n".join(lines) + "\r\n"
                     
                     if cmd == last_cmd:
                         continue
@@ -1434,6 +1679,7 @@ class Dashboard:
                 self.distances = msg.get("d", [0, 0, 0])
                 self.pkt_count += 1
                 self.last_pkt = now
+                self.last_uwb_pkt = now
                 self.connected = True
                 self._rate_n += 1
                 if "bat" in msg:
@@ -1545,6 +1791,10 @@ class Dashboard:
         self._flush_log()
 
         # Panel updates
+        if hasattr(self, 'lbl_z_top'):
+            cur_z = self.fp2_z if self.active_focus == 2 else self.target_z
+            self.lbl_z_top.config(text=f"Z: {cur_z:.2f}m")
+
         if self.connected:
             self.lbl_x.config(text=f"{self.display_x:.3f} m")
             self.lbl_y.config(text=f"{self.display_y:.3f} m")
@@ -1555,14 +1805,38 @@ class Dashboard:
             self._draw_qbar(self.tag_q)
             self.lbl_q.config(text=f"{self.tag_q * 100:.0f}%")
             self.lbl_status.config(text="✅ Connecté", fg=C["ok"])
+        else:
+            self.lbl_status.config(text="⏳ En attente données UWB...", fg=C["dim"])
 
-            # Pan/Tilt
-            th = self.target_z
-                
+        # Pan/Tilt (Focus Point 1 et Focus Point 2)
+        fp2_active = any(self.group_toggles_2.values())
+        if self.connected or fp2_active:
             new_targets = {}
             for j, fx in enumerate(self.fixtures):
-                dx = self.display_x - fx["x"]
-                dy = self.display_y - fx["y"]
+                try:
+                    if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
+                        fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
+                except:
+                    pass
+
+                grp = fx.get("group", 1)
+                in_fp1 = self.group_toggles.get(grp, False)
+                in_fp2 = self.group_toggles_2.get(grp, False)
+
+                if in_fp2:
+                    tx, ty, th = self.fp2_x, self.fp2_y, self.fp2_z
+                    active_for_ma2 = True
+                elif in_fp1 and self.connected:
+                    tx, ty, th = self.display_x, self.display_y, self.target_z
+                    active_for_ma2 = True
+                elif self.connected:
+                    tx, ty, th = self.display_x, self.display_y, self.target_z
+                    active_for_ma2 = False
+                else:
+                    continue
+
+                dx = tx - fx["x"]
+                dy = ty - fx["y"]
                 dz = fx["height"] - th
                 dh = math.sqrt(dx*dx + dy*dy)
                 pan_math = math.degrees(math.atan2(dx, dy))
@@ -1598,26 +1872,17 @@ class Dashboard:
                     self.fx_labels[j].config(
                         text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
                         
-                try:
-                    if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
-                        fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
-                except:
-                    pass
-                        
-                # Store for MA2 Telnet thread (only if group is enabled)
-                grp = fx.get("group", 1)
-                if self.group_toggles.get(grp, True):
+                # Store for MA2 Telnet thread (only if group is enabled in FP1 or FP2)
+                if active_for_ma2:
                     try:
                         gma_id = int(self.fx_ma2_entries[j].get())
                     except:
                         gma_id = fx.get("gma_id", j + 1)
                         
-                    new_targets[gma_id] = (ma_pan, ma_tilt)
+                    new_targets[gma_id] = (ma_pan, ma_tilt, grp)
                 
             with self.ma2_lock:
                 self.ma2_targets = new_targets
-        else:
-            self.lbl_status.config(text="⏳ En attente données UWB...", fg=C["dim"])
 
         # ESP32 indicator (basé sur heartbeat, indépendant du tracking UWB)
         esp32_age = time.time() - self.last_pkt if self.last_pkt > 0 else 999
@@ -1671,11 +1936,10 @@ class Dashboard:
         elif self.ma2_connected:
             self.btn_ma2_top.config(bg="#cc8800")
 
-        # Manual button blink (bleu clignotant quand actif)
+        # Manual button blink (bleu clignotant quand actif, sans changer le texte pour garder une largeur fixe)
         if self.test_mode.get():
             blink = int(time.time() * 2) % 2 == 0
-            self.btn_manual.config(bg="#3388ff" if blink else "#2255aa",
-                                   text="✋ Manual ●" if blink else "✋ Manual")
+            self.btn_manual.config(bg="#3388ff" if blink else "#2255aa")
 
         self.root.after(33, self._tick)
 
