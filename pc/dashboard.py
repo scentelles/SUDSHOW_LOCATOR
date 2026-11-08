@@ -148,8 +148,9 @@ class Dashboard:
         # Telnet MA2 state
         self.ma2_socket = None
         self.ma2_connected = False
-        self.ma2_targets = {}  # {gma_id: (pan, tilt, grp)}
+        self.ma2_targets = {}  # {gma_id: (pan, tilt, grp, manual_cmd)}
         self.ma2_clear_pending = False
+        self.ma2_resend_manual_cmd = False
         self.ma2_lock = threading.Lock()
 
         # Battery monitoring
@@ -257,6 +258,7 @@ class Dashboard:
                 "tilt_max": 95.0,
                 "tilt_offset": 90.0,
                 "tilt_invert": False,
+                "manual_cmd": "",
             })
         return fxs
 
@@ -643,13 +645,13 @@ class Dashboard:
         top = tk.Toplevel(self.root)
         top.title(f"⚙️ {fx['name']}")
         top.configure(bg=C["bg"])
-        top.geometry("280x420")
+        top.geometry("340x530")
         top.transient(self.root)
         top.grab_set()
 
         def _row(parent, label, key, default):
             f = tk.Frame(parent, bg=C["bg"])
-            f.pack(fill="x", padx=10, pady=5)
+            f.pack(fill="x", padx=10, pady=4)
             tk.Label(f, text=label, font=self.ft_label, bg=C["bg"], fg=C["text"], width=14, anchor="w").pack(side="left")
             ent = tk.Entry(f, width=8, font=self.ft_small, bg=C["canvas_bg"], fg=C["text"], insertbackground=C["text"])
             ent.insert(0, str(fx.get(key, default)))
@@ -678,6 +680,26 @@ class Dashboard:
         v_tinv = _check(top, "Inverser Tilt", "tilt_invert", False)
         
         e_grp = _row(top, "Groupe (1-5)", "group", 1)
+
+        # Zone de texte : commande MA2 supplémentaire à l'activation du mode Manual
+        f_cmd = tk.Frame(top, bg=C["bg"])
+        f_cmd.pack(fill="x", padx=10, pady=(8, 2))
+        f_cmd_hdr = tk.Frame(f_cmd, bg=C["bg"])
+        f_cmd_hdr.pack(fill="x")
+        tk.Label(f_cmd_hdr, text="Commande MA2 (mode Manual) :", font=self.ft_label,
+                 bg=C["bg"], fg=C["accent"], anchor="w").pack(side="left")
+        txt_cmd = tk.Text(f_cmd, height=3, font=self.ft_small, bg=C["canvas_bg"],
+                          fg=C["text"], insertbackground=C["text"], bd=1, wrap="word")
+        btn_help = tk.Button(f_cmd_hdr, text="?", font=("Segoe UI", 9, "bold"),
+                             bg=C["border"], fg=C["accent"], bd=0, padx=6, pady=0,
+                             activebackground=C["accent"], activeforeground="#000",
+                             cursor="hand2",
+                             command=lambda: self._show_manual_cmd_help(top, txt_cmd))
+        btn_help.pack(side="right")
+        tk.Label(f_cmd, text="Ex: At 100 ; At Preset 4.1  (cliquez sur ? pour l'aide)",
+                 font=("Segoe UI", 8), bg=C["bg"], fg=C["dim"], anchor="w").pack(fill="x")
+        txt_cmd.insert("1.0", str(fx.get("manual_cmd", "")))
+        txt_cmd.pack(fill="x", pady=(2, 0))
         
         def _save():
             try:
@@ -691,13 +713,77 @@ class Dashboard:
                 fx["tilt_offset"] = float(e_toff.get())
                 fx["tilt_invert"] = v_tinv.get()
                 fx["group"] = max(1, min(5, int(e_grp.get())))
+                fx["manual_cmd"] = txt_cmd.get("1.0", "end-1c").strip()
+                with self.ma2_lock:
+                    self.ma2_resend_manual_cmd = True
                 self._save_config()
                 self._draw()
                 top.destroy()
             except ValueError:
                 pass
                 
-        tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, command=_save).pack(pady=15)
+        tk.Button(top, text="Sauvegarder", font=self.ft_small, bg=C["border"], fg=C["accent"], bd=0, padx=12, pady=4, command=_save).pack(pady=12)
+
+    def _show_manual_cmd_help(self, parent_win, txt_target=None):
+        hlp = tk.Toplevel(parent_win)
+        hlp.title("❓ Aide — Commandes MA2 (Mode Manual)")
+        hlp.configure(bg=C["bg"])
+        hlp.geometry("540x480")
+        hlp.transient(parent_win)
+        hlp.grab_set()
+
+        tk.Label(hlp, text="Exemples de commandes MA2 en mode Manual",
+                 font=self.ft_section, bg=C["bg"], fg=C["accent"]).pack(anchor="w", padx=12, pady=(10, 4))
+
+        tk.Label(hlp, text="Le dashboard ajoute automatiquement 'Fixture <ID>' devant chaque commande\n"
+                           "commençant par At, Attribute, PresetType ou Stomp.\n"
+                           "Séparez plusieurs commandes par ';' ou par un retour à la ligne.",
+                 font=self.ft_label, bg=C["bg"], fg=C["text"], justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+
+        examples = [
+            ("1. Avec un Preset Couleur « Blanc » (recommandé)",
+             "Dimmer à 100% + 1er preset de la piscine Color (4.1) :",
+             'At 100 ; At Preset 4.1'),
+            ("2. Blanc universel (sans Preset)",
+             "Dimmer à 100% + remet toute la fonction Color à sa valeur par défaut (Open/Blanc) :",
+             'At 100 ; PresetType "Color" At Default'),
+            ("3. Lyre à roue de couleurs (Color1)",
+             "Dimmer à 100% + roue de couleur à 0 (Blanc) :",
+             'At 100 ; Attribute "Color1" At 0'),
+            ("4. Lyre LED RGB (ColorRGB1/2/3)",
+             "Dimmer à 100% + RGB à 100% (ou mettre At 0 si CMY pur) :",
+             'At 100 ; Attribute "ColorRGB1" At 100 ; Attribute "ColorRGB2" At 100 ; Attribute "ColorRGB3" At 100'),
+            ("5. Bloquer aussi un effet de Couleur / Dimmer en cours",
+             "Coupe l'effet d'exécuteur sur Dimmer & Color puis force le blanc à 100% :",
+             'Stomp PresetType "Dimmer" ; Stomp PresetType "Color"\nAt 100 ; PresetType "Color" At Default'),
+        ]
+
+        for title, desc, cmd_str in examples:
+            box = tk.Frame(hlp, bg=C["panel"], padx=8, pady=6, highlightbackground=C["border"], highlightthickness=1)
+            box.pack(fill="x", padx=12, pady=3)
+            tk.Label(box, text=title, font=("Segoe UI", 9, "bold"), bg=C["panel"], fg=C["fixture"], anchor="w").pack(fill="x")
+            tk.Label(box, text=desc, font=("Segoe UI", 8), bg=C["panel"], fg=C["dim"], anchor="w").pack(fill="x")
+
+            cmd_row = tk.Frame(box, bg=C["panel"])
+            cmd_row.pack(fill="x", pady=(3, 0))
+            ent_ex = tk.Entry(cmd_row, font=self.ft_small, bg=C["canvas_bg"], fg=C["log_text"],
+                              readonlybackground=C["canvas_bg"], bd=1)
+            ent_ex.insert(0, cmd_str.replace("\n", " ; "))
+            ent_ex.config(state="readonly")
+            ent_ex.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+            if txt_target is not None:
+                def _use_cmd(c=cmd_str):
+                    txt_target.delete("1.0", "end")
+                    txt_target.insert("1.0", c)
+                    hlp.destroy()
+                tk.Button(cmd_row, text="Utiliser", font=("Segoe UI", 8, "bold"),
+                          bg=C["border"], fg=C["accent"], bd=0, padx=8, pady=1,
+                          activebackground=C["accent"], activeforeground="#000",
+                          cursor="hand2", command=_use_cmd).pack(side="right")
+
+        tk.Button(hlp, text="Fermer", font=self.ft_small, bg=C["border"], fg=C["text"],
+                  bd=0, padx=14, pady=4, command=hlp.destroy).pack(pady=10)
 
     def _build_fixtures_list(self):
         for widget in self.frm_fixtures.winfo_children():
@@ -986,7 +1072,7 @@ class Dashboard:
             return (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
 
         fp2_has_groups = any(self.group_toggles_2.values())
-        show_fp2 = fp2_has_groups or (self.test_mode.get() and self.active_focus == 2)
+        show_fp2 = self.connected and (fp2_has_groups or (self.test_mode.get() and self.active_focus == 2))
 
         # Beams (dessinés en 2 passes : focus inactif en arrière-plan atténué, puis focus actif au premier plan)
         for pass_active in (False, True):
@@ -1447,12 +1533,36 @@ class Dashboard:
             self._save_config()
             self.ma2_connected = True
 
+    def _format_fixture_manual_cmd(self, gma_id, raw_cmd):
+        if not raw_cmd or not raw_cmd.strip():
+            return ""
+        lines = [l.strip() for l in raw_cmd.replace("\r", "").split("\n") if l.strip()]
+        raw_joined = " ; ".join(lines).replace("{id}", str(gma_id))
+        parts = [p.strip() for p in raw_joined.split(";") if p.strip()]
+        formatted_parts = []
+        for p in parts:
+            low = p.lower()
+            if (low.startswith("attribute ") or low.startswith("at ") or
+                low.startswith("stomp ") or low.startswith("presettype ")):
+                formatted_parts.append(f"Fixture {gma_id} {p}")
+            else:
+                formatted_parts.append(p)
+        return " ; ".join(formatted_parts)
+
     def _toggle_manual(self):
         current = self.test_mode.get()
         self.test_mode.set(not current)
         if not current:
             self.btn_manual.config(fg="#fff")
             self._log("[UI] Mode manuel activé (clic sur scène)")
+            if self.display_x == 0.0 and self.display_y == 0.0:
+                self.tag_x = self.display_x = round(self.stage_w / 2, 2)
+                self.tag_y = self.display_y = round(self.stage_d / 2, 2)
+            self.connected = True
+            self.last_pkt = time.time()
+            self.tag_q = 1.0
+            with self.ma2_lock:
+                self.ma2_resend_manual_cmd = True
         else:
             self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual")
             self._log("[UI] Mode manuel désactivé")
@@ -1491,6 +1601,9 @@ class Dashboard:
                 
                 # Main loop at 15Hz (0.066s)
                 last_cmd = ""
+                stomped_gids = set()
+                manual_sent_gids = set()
+                last_stomp_t = 0.0
                 while self.ma2_connected:
                     time.sleep(0.066)
                     
@@ -1513,30 +1626,93 @@ class Dashboard:
                     with self.ma2_lock:
                         clear_req = self.ma2_clear_pending
                         self.ma2_clear_pending = False
+                        resend_manual = self.ma2_resend_manual_cmd
+                        self.ma2_resend_manual_cmd = False
                         targets = list(self.ma2_targets.items())
+
+                    if resend_manual:
+                        manual_sent_gids.clear()
 
                     if clear_req:
                         try:
-                            s.sendall(b"ClearAll\r\n")
+                            s.sendall(b"ClearAll\r\nFreeze Off\r\n")
                             last_cmd = ""
-                            self._log("[MA2] ✓ ClearAll envoyé (retour aux valeurs console)")
+                            stomped_gids.clear()
+                            manual_sent_gids.clear()
+                            self._log("[MA2] ✓ ClearAll + Freeze Off envoyé (reprise effets/valeurs console)")
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur envoi ClearAll: {e}")
                             break
                         continue
+
+                    current_gids = {gid for gid, _ in targets}
+                    removed_gids = stomped_gids - current_gids
+                    if removed_gids:
+                        try:
+                            rem_str = " + ".join(str(g) for g in sorted(removed_gids))
+                            rel_cmd = f'Off Fixture {rem_str}\r\n'
+                            s.sendall(rel_cmd.encode("utf-8"))
+                            stomped_gids -= removed_gids
+                            manual_sent_gids -= removed_gids
+                            last_cmd = ""
+                        except Exception as e:
+                            self._log(f"[MA2] ✗ Erreur relâchement lyres: {e}")
+                            break
                         
                     if not targets:
                         continue
+
+                    # Stomp des effets Pan/Tilt en cours sur les lyres contrôlées + Freeze On
+                    now_t = time.time()
+                    new_stomp = current_gids - stomped_gids
+                    if new_stomp or (now_t - last_stomp_t > 1.5):
+                        try:
+                            stomp_groups = {}
+                            for gid, val in targets:
+                                grp = val[2] if len(val) >= 3 else 1
+                                stomp_groups.setdefault(grp, []).append(gid)
+                            stomp_lines = ["Freeze On"]
+                            for grp, gids in sorted(stomp_groups.items()):
+                                g_str = " + ".join(str(g) for g in gids)
+                                stomp_lines.append(
+                                    f'Fixture {g_str} Stomp PresetType "Position" ; '
+                                    f'Fixture {g_str} Stomp Attribute "Pan" ; '
+                                    f'Fixture {g_str} Stomp Attribute "Tilt"'
+                                )
+                            s.sendall(("\r\n".join(stomp_lines) + "\r\n").encode("utf-8"))
+                            stomped_gids.update(current_gids)
+                            last_stomp_t = now_t
+                        except Exception as e:
+                            self._log(f"[MA2] ✗ Erreur envoi Stomp: {e}")
+                            break
+
+                    # Commandes supplémentaires par lyre à l'activation du mode Manual
+                    if self.test_mode.get():
+                        new_manual = current_gids - manual_sent_gids
+                        if new_manual:
+                            custom_lines = []
+                            for gid, val in targets:
+                                if gid in new_manual and len(val) >= 4:
+                                    raw_mcmd = val[3]
+                                    f_cmd = self._format_fixture_manual_cmd(gid, raw_mcmd)
+                                    if f_cmd:
+                                        custom_lines.append(f_cmd)
+                            if custom_lines:
+                                try:
+                                    s.sendall(("\r\n".join(custom_lines) + "\r\n").encode("utf-8"))
+                                    self._log(f"[MA2] ✓ Cmd Manual envoyée ({len(custom_lines)} lyre(s))")
+                                except Exception as e:
+                                    self._log(f"[MA2] ✗ Erreur envoi Cmd Manual: {e}")
+                                    break
+                            manual_sent_gids.update(new_manual)
                         
                     # Build MA2 command (une ligne par groupe pour ne pas dépasser la limite Telnet MA2)
                     # Correct syntax to avoid "Error: Fixture X": Fixture X Attribute "Pan" At Y ; Fixture X Attribute "Tilt" At Z
                     groups_cmd = {}
                     for gid, val in targets:
-                        if len(val) == 3:
-                            pan, tilt, grp = val
-                        else:
-                            pan, tilt = val
-                            grp = 1
+                        pan = val[0]
+                        tilt = val[1]
+                        grp = val[2] if len(val) >= 3 else 1
                         groups_cmd.setdefault(grp, []).append(
                             f'Fixture {gid} Attribute "Pan" At {pan:.1f} ; Fixture {gid} Attribute "Tilt" At {tilt:.1f}'
                         )
@@ -1809,8 +1985,7 @@ class Dashboard:
             self.lbl_status.config(text="⏳ En attente données UWB...", fg=C["dim"])
 
         # Pan/Tilt (Focus Point 1 et Focus Point 2)
-        fp2_active = any(self.group_toggles_2.values())
-        if self.connected or fp2_active:
+        if self.connected:
             new_targets = {}
             for j, fx in enumerate(self.fixtures):
                 try:
@@ -1826,14 +2001,12 @@ class Dashboard:
                 if in_fp2:
                     tx, ty, th = self.fp2_x, self.fp2_y, self.fp2_z
                     active_for_ma2 = True
-                elif in_fp1 and self.connected:
+                elif in_fp1:
                     tx, ty, th = self.display_x, self.display_y, self.target_z
                     active_for_ma2 = True
-                elif self.connected:
+                else:
                     tx, ty, th = self.display_x, self.display_y, self.target_z
                     active_for_ma2 = False
-                else:
-                    continue
 
                 dx = tx - fx["x"]
                 dy = ty - fx["y"]
@@ -1879,7 +2052,7 @@ class Dashboard:
                     except:
                         gma_id = fx.get("gma_id", j + 1)
                         
-                    new_targets[gma_id] = (ma_pan, ma_tilt, grp)
+                    new_targets[gma_id] = (ma_pan, ma_tilt, grp, fx.get("manual_cmd", ""))
                 
             with self.ma2_lock:
                 self.ma2_targets = new_targets
