@@ -96,8 +96,9 @@ class Dashboard:
             self.fixtures = self._default_fixtures()
 
         # --- State ---
-        self.tag_x = 0.0
-        self.tag_y = 0.0
+        fp1_cfg = self.cfg.get("focus_point_1", {})
+        self.tag_x = fp1_cfg.get("x", round(self.stage_w * 0.5, 2))
+        self.tag_y = fp1_cfg.get("y", round(self.stage_d * 0.5, 2))
         self.tag_q = 0.0
         self.distances = [0.0, 0.0, 0.0]
         self.pkt_count = 0
@@ -108,8 +109,8 @@ class Dashboard:
         self._rate_n = 0
         self._rate_t = time.time()
         self.trail = collections.deque(maxlen=120)
-        self.display_x = 0.0
-        self.display_y = 0.0
+        self.display_x = self.tag_x
+        self.display_y = self.tag_y
         self.esp32_ip = None
 
         # --- Velocity prediction (dead-reckoning between UWB packets) ---
@@ -136,7 +137,8 @@ class Dashboard:
         self.ft_large_btn = tkfont.Font(family="Segoe UI", size=14, weight="bold")
         self.ft_grp_btn = tkfont.Font(family="Segoe UI", size=9, weight="bold")
         
-        self.test_mode = tk.BooleanVar(value=False)
+        self.test_mode = tk.BooleanVar(value=False)    # Manual F1
+        self.test_mode_2 = tk.BooleanVar(value=False)  # Manual F2
         self.active_focus = 1  # 1 = Focus Point 1 (Tag/UWB), 2 = Focus Point 2 (Manuel)
         self.group_toggles = {i: True for i in range(1, 6)}
         fp2_grps = self.cfg.get("focus_point_2", {}).get("groups", {})
@@ -207,6 +209,11 @@ class Dashboard:
             
         data["tracking"] = self.cfg.get("tracking", {})
         data["tracking"]["target_height"] = round(self.target_z, 2)
+
+        data["focus_point_1"] = {
+            "x": round(self.display_x, 2),
+            "y": round(self.display_y, 2),
+        }
         
         data["focus_point_2"] = {
             "x": round(self.fp2_x, 2),
@@ -281,13 +288,20 @@ class Dashboard:
                                      command=self._toggle_ma2)
         self.btn_ma2_top.pack(side="left", padx=(16, 0))
 
-        # Bouton Manual mode dans la top bar
-        self.btn_manual = tk.Button(top, text="✋ Manual", font=self.ft_large_btn,
-                                    bg="#555555", fg="#ccc", bd=0, padx=16, pady=4,
+        # Boutons Manual mode dans la top bar (un pour F1, un pour F2)
+        self.btn_manual = tk.Button(top, text="✋ Manual F1", font=self.ft_large_btn,
+                                    bg="#555555", fg="#ccc", bd=0, padx=12, pady=4,
                                     activebackground="#777777", activeforeground="#fff",
                                     cursor="hand2",
-                                    command=self._toggle_manual)
+                                    command=lambda: self._toggle_manual(1))
         self.btn_manual.pack(side="left", padx=(8, 0))
+
+        self.btn_manual_2 = tk.Button(top, text="✋ Manual F2", font=self.ft_large_btn,
+                                      bg="#555555", fg="#ccc", bd=0, padx=12, pady=4,
+                                      activebackground="#777777", activeforeground="#fff",
+                                      cursor="hand2",
+                                      command=lambda: self._toggle_manual(2))
+        self.btn_manual_2.pack(side="left", padx=(6, 0))
 
         # Bouton Vue X/Z dans la top bar (à côté du bouton Manual)
         self.btn_toggle_front = tk.Button(top, text="📐 Vue X/Z", font=self.ft_large_btn,
@@ -1071,8 +1085,10 @@ class Dashboard:
         def get_fp2_pos():
             return (self.fp2_x, self.fp2_y) if view == "top" else (self.fp2_x, self.fp2_z)
 
+        fp1_has_groups = any(self.group_toggles.values())
+        show_fp1 = fp1_has_groups or self.active_focus == 1 or self.connected
         fp2_has_groups = any(self.group_toggles_2.values())
-        show_fp2 = self.connected and (fp2_has_groups or (self.test_mode.get() and self.active_focus == 2))
+        show_fp2 = fp2_has_groups or self.active_focus == 2
 
         # Beams (dessinés en 2 passes : focus inactif en arrière-plan atténué, puis focus actif au premier plan)
         for pass_active in (False, True):
@@ -1083,7 +1099,7 @@ class Dashboard:
                 if in_fp2 and show_fp2:
                     fp_num = 2
                     tx, ty_z = get_fp2_pos()
-                elif in_fp1 and self.connected:
+                elif in_fp1 and show_fp1:
                     fp_num = 1
                     tx, ty_z = get_tag_pos()
                 else:
@@ -1227,7 +1243,7 @@ class Dashboard:
             if show_fp2 and (self.active_focus == 2) == pass_active:
                 tx2, ty2_z = get_fp2_pos()
                 draw_focus_point(2, tx2, ty2_z, pass_active)
-            if self.connected and (self.active_focus == 1) == pass_active:
+            if show_fp1 and (self.active_focus == 1) == pass_active:
                 tx1, ty1_z = get_tag_pos()
                 draw_focus_point(1, tx1, ty1_z, pass_active)
 
@@ -1268,10 +1284,9 @@ class Dashboard:
         px, py, _ = self._s2p(tx, ty_z, cv, view)
         d = math.hypot(event.x - px, event.y - py)
         if d < 25 and d < best_dist:
-            if view == "front" or self.test_mode.get():
-                best_dist = d
-                best_type = active_tag_type
-                best_idx = -1
+            best_dist = d
+            best_type = active_tag_type
+            best_idx = -1
 
         if best_type:
             self._drag_type = best_type
@@ -1279,7 +1294,7 @@ class Dashboard:
             self._dragging = True
             self._drag_view = view
             cv.config(cursor="fleur")
-        elif self.test_mode.get() or view == "front":
+        else:
             self._drag_type = active_tag_type
             self._dragging = True
             self._drag_view = view
@@ -1311,14 +1326,16 @@ class Dashboard:
             else:
                 self.fixtures[self._drag_idx]["height"] = sy
         elif self._drag_type == "tag":
-            if self.test_mode.get():
+            uwb_live = (time.time() - self.last_uwb_pkt < 3.0) and not self.test_mode.get()
+            if not uwb_live:
                 self.tag_x = sx
                 self.display_x = sx
+            if self.test_mode.get():
                 self.connected = True
                 self.last_pkt = time.time()
                 self.tag_q = 1.0
 
-            if view == "top" and self.test_mode.get():
+            if view == "top" and not uwb_live:
                 self.tag_y = sy
                 self.display_y = sy
             elif view == "front":
@@ -1328,9 +1345,8 @@ class Dashboard:
                 if hasattr(self, 'lbl_z'):
                     self.lbl_z.config(text=f"{self.target_z:.3f} m")
         elif self._drag_type == "tag2":
-            if self.test_mode.get():
-                self.fp2_x = sx
-            if view == "top" and self.test_mode.get():
+            self.fp2_x = sx
+            if view == "top":
                 self.fp2_y = sy
             elif view == "front":
                 self.fp2_z = sy
@@ -1549,29 +1565,49 @@ class Dashboard:
                 formatted_parts.append(p)
         return " ; ".join(formatted_parts)
 
-    def _toggle_manual(self):
-        current = self.test_mode.get()
-        self.test_mode.set(not current)
-        if not current:
-            self.btn_manual.config(fg="#fff")
-            self._log("[UI] Mode manuel activé (clic sur scène)")
-            if self.display_x == 0.0 and self.display_y == 0.0:
-                self.tag_x = self.display_x = round(self.stage_w / 2, 2)
-                self.tag_y = self.display_y = round(self.stage_d / 2, 2)
-            self.connected = True
-            self.last_pkt = time.time()
-            self.tag_q = 1.0
-            with self.ma2_lock:
-                self.ma2_resend_manual_cmd = True
+    def _toggle_manual(self, fp=1):
+        if fp == 1:
+            current = self.test_mode.get()
+            self.test_mode.set(not current)
+            if not current:
+                self.btn_manual.config(fg="#fff")
+                self._log("[UI] Mode Manual F1 activé")
+                self.connected = True
+                self.last_pkt = time.time()
+                self.tag_q = 1.0
+            else:
+                self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual F1")
+                self._log("[UI] Mode Manual F1 désactivé")
+                if time.time() - self.last_uwb_pkt > 3.0:
+                    self.connected = False
+                with self.ma2_lock:
+                    # Retirer immédiatement uniquement les lyres de F1
+                    if not self.connected:
+                        self.ma2_targets = {
+                            gid: val for gid, val in self.ma2_targets.items()
+                            if self.group_toggles_2.get(val[2] if len(val) >= 3 else 1, False)
+                        }
+                    if not self.test_mode_2.get() and not self.connected:
+                        self.ma2_targets.clear()
+                        self.ma2_clear_pending = True
         else:
-            self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual")
-            self._log("[UI] Mode manuel désactivé")
-            # Si aucun paquet UWB réel récent, repasser en non-connecté pour ne pas renvoyer la position manuelle
-            if time.time() - self.last_uwb_pkt > 3.0:
-                self.connected = False
-            with self.ma2_lock:
-                self.ma2_targets.clear()
-                self.ma2_clear_pending = True
+            current = self.test_mode_2.get()
+            self.test_mode_2.set(not current)
+            if not current:
+                self.btn_manual_2.config(fg="#fff")
+                self._log("[UI] Mode Manual F2 activé")
+            else:
+                self.btn_manual_2.config(bg="#555555", fg="#ccc", text="✋ Manual F2")
+                self._log("[UI] Mode Manual F2 désactivé")
+                with self.ma2_lock:
+                    # Retirer immédiatement uniquement les lyres de F2
+                    self.ma2_targets = {
+                        gid: val for gid, val in self.ma2_targets.items()
+                        if not self.group_toggles_2.get(val[2] if len(val) >= 3 else 1, False)
+                    }
+                    if not self.test_mode.get() and not self.connected:
+                        self.ma2_targets.clear()
+                        self.ma2_clear_pending = True
             
     def _telnet_loop(self):
         while True:
@@ -1655,6 +1691,7 @@ class Dashboard:
                             stomped_gids -= removed_gids
                             manual_sent_gids -= removed_gids
                             last_cmd = ""
+                            self._log(f"[MA2] ✓ Relâchement Fixture {rem_str} (retour console pour ces lyres)")
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur relâchement lyres: {e}")
                             break
@@ -1686,8 +1723,8 @@ class Dashboard:
                             self._log(f"[MA2] ✗ Erreur envoi Stomp: {e}")
                             break
 
-                    # Commandes supplémentaires par lyre à l'activation du mode Manual
-                    if self.test_mode.get():
+                    # Commandes supplémentaires par lyre à l'activation du mode Manual (F1 ou F2)
+                    if self.test_mode.get() or self.test_mode_2.get():
                         new_manual = current_gids - manual_sent_gids
                         if new_manual:
                             custom_lines = []
@@ -1954,11 +1991,9 @@ class Dashboard:
     # TICK
     # =========================================================================
     def _tick(self):
-        # Direct display: tag_x/y is set by the UDP thread (trilaterated)
-        # display_x/y just tracks it directly for instant response
-        if self.connected:
-            self.display_x = self.tag_x
-            self.display_y = self.tag_y
+        # Direct display: tag_x/y is set by the UDP thread (trilaterated) or manual edit
+        self.display_x = self.tag_x
+        self.display_y = self.tag_y
 
         # Draw
         self._draw()
@@ -1971,10 +2006,11 @@ class Dashboard:
             cur_z = self.fp2_z if self.active_focus == 2 else self.target_z
             self.lbl_z_top.config(text=f"Z: {cur_z:.2f}m")
 
+        self.lbl_x.config(text=f"{self.display_x:.3f} m")
+        self.lbl_y.config(text=f"{self.display_y:.3f} m")
+        self.lbl_z.config(text=f"{self.target_z:.3f} m")
+
         if self.connected:
-            self.lbl_x.config(text=f"{self.display_x:.3f} m")
-            self.lbl_y.config(text=f"{self.display_y:.3f} m")
-            self.lbl_z.config(text=f"{self.target_z:.3f} m")
             for i, l in enumerate(self.dlbls):
                 if i < len(self.distances):
                     l.config(text=f"{self.distances[i]:.3f} m")
@@ -1984,78 +2020,83 @@ class Dashboard:
         else:
             self.lbl_status.config(text="⏳ En attente données UWB...", fg=C["dim"])
 
-        # Pan/Tilt (Focus Point 1 et Focus Point 2)
-        if self.connected:
-            new_targets = {}
-            for j, fx in enumerate(self.fixtures):
+        # Pan/Tilt (Focus Point 1 et Focus Point 2) : toujours calculé pour l'aperçu UI,
+        # mais envoyé à GrandMA2 uniquement pour les focus points actifs (Manual F1 / UWB live ou Manual F2)
+        fp1_live = self.test_mode.get() or self.connected
+        fp2_live = self.test_mode_2.get()
+        new_targets = {}
+        for j, fx in enumerate(self.fixtures):
+            try:
+                if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
+                    fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
+            except:
+                pass
+
+            grp = fx.get("group", 1)
+            in_fp1 = self.group_toggles.get(grp, False)
+            in_fp2 = self.group_toggles_2.get(grp, False)
+
+            if in_fp2:
+                tx, ty, th = self.fp2_x, self.fp2_y, self.fp2_z
+                active_for_ma2 = fp2_live
+                is_manual_fp = self.test_mode_2.get()
+            elif in_fp1:
+                tx, ty, th = self.display_x, self.display_y, self.target_z
+                active_for_ma2 = fp1_live
+                is_manual_fp = self.test_mode.get()
+            else:
+                tx, ty, th = self.display_x, self.display_y, self.target_z
+                active_for_ma2 = False
+                is_manual_fp = False
+
+            dx = tx - fx["x"]
+            dy = ty - fx["y"]
+            dz = fx["height"] - th
+            dh = math.sqrt(dx*dx + dy*dy)
+            pan_math = math.degrees(math.atan2(dx, dy))
+            tilt_math = math.degrees(math.atan2(dz, dh)) if dh > 0.01 else 90
+            
+            # Inversion si accrochée à l'envers
+            if fx.get("pan_invert", False):
+                pan_math = -pan_math
+            if fx.get("tilt_invert", False):
+                tilt_math = -tilt_math
+            
+            # Normalisation Pan (0-360)
+            if pan_math < 0:
+                pan_math += 360.0
+                
+            # Application des offsets et limites
+            ma_pan = pan_math + float(fx.get("pan_offset", 0.0))
+            ma_pan = max(float(fx.get("pan_min", 0.0)), min(float(fx.get("pan_max", 540.0)), ma_pan))
+            
+            ma_tilt = tilt_math + float(fx.get("tilt_offset", 90.0))
+            ma_tilt = max(float(fx.get("tilt_min", -95.0)), min(float(fx.get("tilt_max", 95.0)), ma_tilt))
+            
+            # Visual warning if hitting bounds
+            if (ma_pan <= float(fx.get("pan_min", 0.0)) or 
+                ma_pan >= float(fx.get("pan_max", 540.0)) or 
+                ma_tilt <= float(fx.get("tilt_min", -95.0)) or 
+                ma_tilt >= float(fx.get("tilt_max", 95.0))):
+                status_col = "#aa4444"
+            else:
+                status_col = C["text"]
+                
+            if j < len(self.fx_labels):
+                self.fx_labels[j].config(
+                    text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
+                    
+            # Store for MA2 Telnet thread (only when this fixture's focus point is active)
+            if active_for_ma2:
                 try:
-                    if hasattr(self, 'fx_grp_entries') and j < len(self.fx_grp_entries):
-                        fx["group"] = max(1, min(5, int(self.fx_grp_entries[j].get())))
+                    gma_id = int(self.fx_ma2_entries[j].get())
                 except:
-                    pass
-
-                grp = fx.get("group", 1)
-                in_fp1 = self.group_toggles.get(grp, False)
-                in_fp2 = self.group_toggles_2.get(grp, False)
-
-                if in_fp2:
-                    tx, ty, th = self.fp2_x, self.fp2_y, self.fp2_z
-                    active_for_ma2 = True
-                elif in_fp1:
-                    tx, ty, th = self.display_x, self.display_y, self.target_z
-                    active_for_ma2 = True
-                else:
-                    tx, ty, th = self.display_x, self.display_y, self.target_z
-                    active_for_ma2 = False
-
-                dx = tx - fx["x"]
-                dy = ty - fx["y"]
-                dz = fx["height"] - th
-                dh = math.sqrt(dx*dx + dy*dy)
-                pan_math = math.degrees(math.atan2(dx, dy))
-                tilt_math = math.degrees(math.atan2(dz, dh)) if dh > 0.01 else 90
-                
-                # Inversion si accrochée à l'envers
-                if fx.get("pan_invert", False):
-                    pan_math = -pan_math
-                if fx.get("tilt_invert", False):
-                    tilt_math = -tilt_math
-                
-                # Normalisation Pan (0-360)
-                if pan_math < 0:
-                    pan_math += 360.0
+                    gma_id = fx.get("gma_id", j + 1)
                     
-                # Application des offsets et limites
-                ma_pan = pan_math + float(fx.get("pan_offset", 0.0))
-                ma_pan = max(float(fx.get("pan_min", 0.0)), min(float(fx.get("pan_max", 540.0)), ma_pan))
-                
-                ma_tilt = tilt_math + float(fx.get("tilt_offset", 90.0))
-                ma_tilt = max(float(fx.get("tilt_min", -95.0)), min(float(fx.get("tilt_max", 95.0)), ma_tilt))
-                
-                # Visual warning if hitting bounds
-                if (ma_pan <= float(fx.get("pan_min", 0.0)) or 
-                    ma_pan >= float(fx.get("pan_max", 540.0)) or 
-                    ma_tilt <= float(fx.get("tilt_min", -95.0)) or 
-                    ma_tilt >= float(fx.get("tilt_max", 95.0))):
-                    status_col = "#aa4444"
-                else:
-                    status_col = C["text"]
-                    
-                if j < len(self.fx_labels):
-                    self.fx_labels[j].config(
-                        text=f"P={ma_pan:.1f}° T={ma_tilt:.1f}°", fg=status_col)
-                        
-                # Store for MA2 Telnet thread (only if group is enabled in FP1 or FP2)
-                if active_for_ma2:
-                    try:
-                        gma_id = int(self.fx_ma2_entries[j].get())
-                    except:
-                        gma_id = fx.get("gma_id", j + 1)
-                        
-                    new_targets[gma_id] = (ma_pan, ma_tilt, grp, fx.get("manual_cmd", ""))
-                
-            with self.ma2_lock:
-                self.ma2_targets = new_targets
+                new_targets[gma_id] = (ma_pan, ma_tilt, grp, fx.get("manual_cmd", "") if is_manual_fp else "")
+            
+        with self.ma2_lock:
+            self.ma2_targets = new_targets
 
         # ESP32 indicator (basé sur heartbeat, indépendant du tracking UWB)
         esp32_age = time.time() - self.last_pkt if self.last_pkt > 0 else 999
@@ -2109,10 +2150,12 @@ class Dashboard:
         elif self.ma2_connected:
             self.btn_ma2_top.config(bg="#cc8800")
 
-        # Manual button blink (bleu clignotant quand actif, sans changer le texte pour garder une largeur fixe)
+        # Manual buttons blink (sans changer le texte pour garder une largeur fixe)
+        blink = int(time.time() * 2) % 2 == 0
         if self.test_mode.get():
-            blink = int(time.time() * 2) % 2 == 0
-            self.btn_manual.config(bg="#3388ff" if blink else "#2255aa")
+            self.btn_manual.config(bg="#ff4444" if blink else "#aa2222")
+        if self.test_mode_2.get():
+            self.btn_manual_2.config(bg="#00ccdd" if blink else "#007788", fg="#fff")
 
         self.root.after(33, self._tick)
 

@@ -45,7 +45,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "id": 2,
@@ -68,7 +69,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "id": 3,
@@ -91,7 +93,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "id": 4,
@@ -114,7 +117,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 5",
@@ -130,7 +134,8 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "tilt_invert": true,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 6",
@@ -146,7 +151,8 @@
             "tilt_max": 95.0,
             "tilt_offset": 90.0,
             "tilt_invert": true,
-            "group": 1
+            "group": 1,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 7",
@@ -162,7 +168,8 @@
             "tilt_min": -135.0,
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
-            "tilt_invert": false
+            "tilt_invert": false,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 8",
@@ -178,7 +185,8 @@
             "tilt_min": -135.0,
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
-            "tilt_invert": false
+            "tilt_invert": false,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 9",
@@ -194,7 +202,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": -90.0,
-            "tilt_invert": true
+            "tilt_invert": true,
+            "manual_cmd": ""
         },
         {
             "name": "Lyre 10",
@@ -210,7 +219,8 @@
             "tilt_min": -95.0,
             "tilt_max": 95.0,
             "tilt_offset": -90.0,
-            "tilt_invert": true
+            "tilt_invert": true,
+            "manual_cmd": ""
         }
     ],
     "network": {
@@ -241,8 +251,8 @@
     },
     "hide_anchors": true,
     "focus_point_2": {
-        "x": 5.3,
-        "y": 2.4,
+        "x": 3.2,
+        "y": 1.3,
         "z": 1.2,
         "groups": {
             "1": false,
