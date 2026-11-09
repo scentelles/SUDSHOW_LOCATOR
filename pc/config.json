@@ -257,7 +257,7 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "manual_cmd": "At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
             "visible": true,
             "color_subfixtures": ".2 thru .4"
         },
@@ -276,7 +276,7 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "manual_cmd": "At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
             "visible": true,
             "color_subfixtures": ".2 thru .4"
         },
@@ -295,7 +295,7 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "manual_cmd": "At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
             "visible": true,
             "color_subfixtures": ".2 thru .4"
         },
@@ -314,7 +314,7 @@
             "tilt_max": 135.0,
             "tilt_offset": 90.0,
             "tilt_invert": false,
-            "manual_cmd": "At 100 ; At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
+            "manual_cmd": "At Preset 6.1; Fixture {id}.3 thru {id}.4 At Preset 4.1; Fixture {id}.2 At 0",
             "visible": true,
             "color_subfixtures": ".2 thru .4"
         }

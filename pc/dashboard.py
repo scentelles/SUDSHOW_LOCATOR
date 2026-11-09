@@ -1137,7 +1137,7 @@ class Dashboard:
                              cursor="hand2",
                              command=lambda: self._show_manual_cmd_help(top, txt_cmd))
         btn_help.pack(side="right")
-        tk.Label(f_cmd, text="Ex: At 100 ; At Preset 4.1  (cliquez sur ? pour l'aide)",
+        tk.Label(f_cmd, text="Ex: At Preset 6.1 ; Fixture {sub} At Preset 4.1  (? pour l'aide)",
                  font=("Segoe UI", 8), bg=C["bg"], fg=C["dim"], anchor="w").pack(fill="x")
         txt_cmd.insert("1.0", str(fx.get("manual_cmd", "")))
         txt_cmd.pack(fill="x", pady=(2, 0))
@@ -1226,7 +1226,9 @@ class Dashboard:
             "   Si vous commencez directement par 'At ...', 'Attribute ...' ou 'Stomp ...',\n"
             "   le dashboard ajoute automatiquement 'Fixture {id}' devant chaque commande.\n"
             "   Exemple : 'At 100 ; At Preset 4.1' devient 'Fixture 301 At 100 ; Fixture 301 At Preset 4.1'\n"
-            "• Séparez plusieurs instructions par ';' ou par un saut de ligne."
+            "• Séparez plusieurs instructions par ';' ou par un saut de ligne.\n\n"
+            "💡 Contrôle du Dimmer : Si vous pilotez l'intensité via vos faders d'exécuteurs sur la console,\n"
+            "   n'incluez PAS 'At 100' afin de ne pas bloquer le dimmer dans le programmer GrandMA2."
         )
         tk.Label(info_frame, text=info_text, font=self.ft_small, bg=C["panel"],
                  fg=C["text"], justify="left", anchor="w").pack(fill="x", pady=(4, 0))
@@ -2776,7 +2778,8 @@ class Dashboard:
                                 stomp_lines.append(
                                     f'Fixture {g_str} Stomp PresetType "Position" ; '
                                     f'Fixture {g_str} Stomp Attribute "Pan" ; '
-                                    f'Fixture {g_str} Stomp Attribute "Tilt"'
+                                    f'Fixture {g_str} Stomp Attribute "Tilt" ; '
+                                    f'Fixture {g_str} Stomp PresetType "Dimmer"'
                                 )
                             # Couper tout effet de couleur actif sur les lyres / sous-fixtures
                             for ct in stomp_col_targets:
