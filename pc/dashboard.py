@@ -1715,20 +1715,27 @@ class Dashboard:
         if color_targets:
             g_str = " + ".join(color_targets)
             r, g_val, b = rgb
-            if name == "Blanc":
-                cmd = (f'Fixture {g_str} Attribute "ColorRGB1" At 100 ; '
-                       f'Fixture {g_str} Attribute "ColorRGB2" At 100 ; '
-                       f'Fixture {g_str} Attribute "ColorRGB3" At 100 ; '
-                       f'Fixture {g_str} Attribute "ColorRGB5" At 100 ; '
-                       f'Fixture {g_str} PresetType "Color" At Default\r\n')
-            else:
-                cmd = (f'Fixture {g_str} Attribute "ColorRGB1" At {r} ; '
-                       f'Fixture {g_str} Attribute "ColorRGB2" At {g_val} ; '
-                       f'Fixture {g_str} Attribute "ColorRGB3" At {b} ; '
-                       f'Fixture {g_str} Attribute "ColorRGB5" At 0\r\n')
+            cmd_lines = []
+            for t in color_targets:
+                if name == "Blanc":
+                    cmd_lines.extend([
+                        f'Fixture {t} Attribute "ColorRGB1" At 100',
+                        f'Fixture {t} Attribute "ColorRGB2" At 100',
+                        f'Fixture {t} Attribute "ColorRGB3" At 100',
+                        f'Fixture {t} Attribute "ColorRGB5" At 100',
+                        f'Fixture {t} PresetType "Color" At Default',
+                    ])
+                else:
+                    cmd_lines.extend([
+                        f'Fixture {t} Attribute "ColorRGB1" At {r}',
+                        f'Fixture {t} Attribute "ColorRGB2" At {g_val}',
+                        f'Fixture {t} Attribute "ColorRGB3" At {b}',
+                        f'Fixture {t} Attribute "ColorRGB5" At 0',
+                    ])
+            cmd = "\r\n".join(cmd_lines) + "\r\n"
 
             self._send_ma2_direct(cmd)
-            self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name}")
+            self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name} ({len(color_targets)} cible(s))")
         else:
             self._log(f"[UI] Focus {fp} Couleur -> {name} (aucun groupe actif sur F{fp})")
 
