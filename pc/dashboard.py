@@ -55,6 +55,18 @@ C = {
 # DASHBOARD
 # =============================================================================
 class Dashboard:
+    # 8 Couleurs standards (Nom, Hex, (R, G, B) 0-100)
+    COLOR_SWATCHES = [
+        ("Blanc",   "#FFFFFF", (100, 100, 100)),
+        ("Rouge",   "#FF3333", (100, 0, 0)),
+        ("Vert",    "#33FF33", (0, 100, 0)),
+        ("Bleu",    "#3366FF", (0, 0, 100)),
+        ("Jaune",   "#FFFF33", (100, 100, 0)),
+        ("Cyan",    "#33FFFF", (0, 100, 100)),
+        ("Magenta", "#FF33FF", (100, 0, 100)),
+        ("Orange",  "#FF8800", (100, 45, 0)),
+    ]
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SudShow Locator — Dashboard")
@@ -1678,20 +1690,23 @@ class Dashboard:
         # Si c'est déjà un identifiant absolu ou une cible personnalisée
         return sub
 
-    def _apply_focus_color(self, fp, name, hex_code, rgb):
-        s_fp = str(fp)
-        self.focus_current_color[s_fp] = hex_code
+    def _is_focus_active(self, fp):
+        """Retourne True si le Focus concerné est actif pour le contrôle des projecteurs."""
+        if fp == 1:
+            return bool(self.test_mode.get() or self.connected)
+        else:
+            return bool(self.test_mode_2.get())
 
-        # Mise à jour du cadre de sélection (zéro décalage de géométrie)
-        if fp in self.color_swatch_boxes:
-            for s_box, (_, s_hex, _) in zip(self.color_swatch_boxes[fp], self.COLOR_SWATCHES):
-                if s_hex.upper() == hex_code.upper():
-                    hl = "#00d4ff" if s_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF"
-                    s_box.config(bg=hl)
-                else:
-                    s_box.config(bg=C["canvas_bg"])
+    def _get_swatch_by_hex(self, hex_code):
+        """Retourne (name, hex_code, (r, g, b)) correspondant à un code hexadécimal."""
+        hex_u = str(hex_code).upper()
+        for name, s_hex, rgb in self.COLOR_SWATCHES:
+            if s_hex.upper() == hex_u:
+                return name, s_hex, rgb
+        return "Blanc", "#FFFFFF", (100, 100, 100)
 
-        # Récupérer les cibles de couleur des lyres affectées à ce Focus
+    def _get_focus_color_targets(self, fp):
+        """Récupère les cibles GrandMA2 (lyres ou sous-fixtures) pour le Focus fp."""
         color_targets = []
         for j, fx in enumerate(self.fixtures):
             if not fx.get("visible", True):
@@ -1711,35 +1726,71 @@ class Dashboard:
                 target = self._get_fixture_color_target(fx, gid)
                 if target and target not in color_targets:
                     color_targets.append(target)
+        return color_targets
 
-        if color_targets:
-            g_str = " + ".join(color_targets)
-            r, g_val, b = rgb
-            cmd_lines = []
-            for t in color_targets:
-                if name == "Blanc":
-                    cmd_lines.extend([
-                        f'Fixture {t} Attribute "ColorRGB1" At 100',
-                        f'Fixture {t} Attribute "ColorRGB2" At 100',
-                        f'Fixture {t} Attribute "ColorRGB3" At 100',
-                        f'Fixture {t} Attribute "ColorRGB5" At 100',
-                        f'Fixture {t} PresetType "Color" At Default',
-                    ])
+    def _send_focus_color_to_ma2(self, fp):
+        """
+        Envoie la couleur configurée du Focus fp vers GrandMA2 avec priorité absolue :
+        Freeze On + Stomp PresetType Color sur chaque cible pour stopper les effets MA2,
+        puis assignation des attributs RGBW.
+        """
+        if not self._is_focus_active(fp):
+            return
+
+        color_targets = self._get_focus_color_targets(fp)
+        if not color_targets:
+            return
+
+        s_fp = str(fp)
+        hex_code = self.focus_current_color.get(s_fp, "#FFFFFF")
+        name, _, rgb = self._get_swatch_by_hex(hex_code)
+        g_str = " + ".join(color_targets)
+        r, g_val, b = rgb
+
+        cmd_lines = ["Freeze On"]
+        for t in color_targets:
+            # Stomp de tout effet de couleur actif sur cette fixture/sous-fixture pour que le dashboard prenne la priorité absolue
+            cmd_lines.append(f'Fixture {t} Stomp PresetType "Color"')
+            if name == "Blanc":
+                cmd_lines.extend([
+                    f'Fixture {t} Attribute "ColorRGB1" At 100',
+                    f'Fixture {t} Attribute "ColorRGB2" At 100',
+                    f'Fixture {t} Attribute "ColorRGB3" At 100',
+                    f'Fixture {t} Attribute "ColorRGB5" At 100',
+                    f'Fixture {t} PresetType "Color" At Default',
+                ])
+            else:
+                cmd_lines.extend([
+                    f'Fixture {t} Attribute "ColorRGB1" At {r}',
+                    f'Fixture {t} Attribute "ColorRGB2" At {g_val}',
+                    f'Fixture {t} Attribute "ColorRGB3" At {b}',
+                    f'Fixture {t} Attribute "ColorRGB5" At 0',
+                ])
+        cmd = "\r\n".join(cmd_lines) + "\r\n"
+        self._send_ma2_direct(cmd)
+        self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name} (Priorité/Stomp OK)")
+
+    def _apply_focus_color(self, fp, name, hex_code, rgb):
+        s_fp = str(fp)
+        self.focus_current_color[s_fp] = hex_code
+
+        # Mise à jour du cadre de sélection (zéro décalage de géométrie)
+        if fp in self.color_swatch_boxes:
+            for s_box, (_, s_hex, _) in zip(self.color_swatch_boxes[fp], self.COLOR_SWATCHES):
+                if s_hex.upper() == hex_code.upper():
+                    hl = "#00d4ff" if s_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF"] else "#FFFFFF"
+                    s_box.config(bg=hl)
                 else:
-                    cmd_lines.extend([
-                        f'Fixture {t} Attribute "ColorRGB1" At {r}',
-                        f'Fixture {t} Attribute "ColorRGB2" At {g_val}',
-                        f'Fixture {t} Attribute "ColorRGB3" At {b}',
-                        f'Fixture {t} Attribute "ColorRGB5" At 0',
-                    ])
-            cmd = "\r\n".join(cmd_lines) + "\r\n"
-
-            self._send_ma2_direct(cmd)
-            self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name} ({len(color_targets)} cible(s))")
-        else:
-            self._log(f"[UI] Focus {fp} Couleur -> {name} (aucun groupe actif sur F{fp})")
+                    s_box.config(bg=C["canvas_bg"])
 
         self._save_config()
+
+        # Si le Focus n'est pas actif (Manual éteint et pas de suivi live), on ne touche pas à la console
+        if not self._is_focus_active(fp):
+            self._log(f"[UI] Focus {fp} Couleur {name} mémorisée (en attente d'activation Manual F{fp})")
+            return
+
+        self._send_focus_color_to_ma2(fp)
 
     def _send_ma2_direct(self, cmd):
         with self.ma2_lock:
@@ -1854,6 +1905,8 @@ class Dashboard:
             self._update_group_btn_color(grp, 2)
         self._save_config()
         self._draw()
+        if self._is_focus_active(fp) and (self.group_toggles[grp] if fp == 1 else self.group_toggles_2[grp]):
+            self._send_focus_color_to_ma2(fp)
 
     def _update_group_btn_color(self, grp, fp=1):
         if fp == 1:
@@ -2553,6 +2606,7 @@ class Dashboard:
                 self.connected = True
                 self.last_pkt = time.time()
                 self.tag_q = 1.0
+                self._send_focus_color_to_ma2(1)
             else:
                 self.btn_manual.config(bg="#555555", fg="#ccc", text="✋ Manual F1")
                 self._log("[UI] Mode Manual F1 désactivé")
@@ -2574,6 +2628,7 @@ class Dashboard:
             if not current:
                 self.btn_manual_2.config(fg="#fff")
                 self._log("[UI] Mode Manual F2 activé")
+                self._send_focus_color_to_ma2(2)
             else:
                 self.btn_manual_2.config(bg="#555555", fg="#ccc", text="✋ Manual F2")
                 self._log("[UI] Mode Manual F2 désactivé")
@@ -2617,6 +2672,7 @@ class Dashboard:
                 last_cmd = ""
                 stomped_gids = set()
                 manual_sent_gids = set()
+                known_col_targets = {}
                 last_stomp_t = 0.0
                 while self.ma2_connected:
                     time.sleep(0.066)
@@ -2664,6 +2720,7 @@ class Dashboard:
                             last_cmd = ""
                             stomped_gids.clear()
                             manual_sent_gids.clear()
+                            known_col_targets.clear()
                             self._log("[MA2] ✓ ClearAll + Freeze Off envoyé (reprise effets/valeurs console)")
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur envoi ClearAll: {e}")
@@ -2674,13 +2731,20 @@ class Dashboard:
                     removed_gids = stomped_gids - current_gids
                     if removed_gids:
                         try:
-                            rem_str = " + ".join(str(g) for g in sorted(removed_gids))
-                            rel_cmd = f'Off Fixture {rem_str}\r\n'
+                            rem_lines = []
+                            for g in sorted(removed_gids):
+                                rem_lines.append(f'Off Fixture {g}')
+                                col_t = known_col_targets.get(g)
+                                if col_t and col_t != str(g):
+                                    rem_lines.append(f'Off Fixture {col_t}')
+                            rel_cmd = "\r\n".join(rem_lines) + "\r\n"
                             s.sendall(rel_cmd.encode("utf-8"))
                             stomped_gids -= removed_gids
                             manual_sent_gids -= removed_gids
+                            for g in removed_gids:
+                                known_col_targets.pop(g, None)
                             last_cmd = ""
-                            self._log(f"[MA2] ✓ Relâchement Fixture {rem_str} (retour console pour ces lyres)")
+                            self._log(f"[MA2] ✓ Relâchement Fixture {', '.join(str(g) for g in sorted(removed_gids))} (retour console pour ces lyres)")
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur relâchement lyres: {e}")
                             break
@@ -2688,15 +2752,24 @@ class Dashboard:
                     if not targets:
                         continue
 
-                    # Stomp des effets Pan/Tilt en cours sur les lyres contrôlées + Freeze On
+                    # Stomp des effets Pan/Tilt et Couleur en cours sur les lyres contrôlées + Freeze On
                     now_t = time.time()
                     new_stomp = current_gids - stomped_gids
                     if new_stomp or (now_t - last_stomp_t > 1.5):
                         try:
                             stomp_groups = {}
+                            stomp_col_targets = []
                             for gid, val in targets:
                                 grp = val[2] if len(val) >= 3 else 1
                                 stomp_groups.setdefault(grp, []).append(gid)
+                                col_t = val[4] if len(val) >= 5 else None
+                                if col_t:
+                                    known_col_targets[gid] = col_t
+                                    if col_t not in stomp_col_targets:
+                                        stomp_col_targets.append(col_t)
+                                else:
+                                    known_col_targets[gid] = str(gid)
+
                             stomp_lines = ["Freeze On"]
                             for grp, gids in sorted(stomp_groups.items()):
                                 g_str = " + ".join(str(g) for g in gids)
@@ -2705,9 +2778,20 @@ class Dashboard:
                                     f'Fixture {g_str} Stomp Attribute "Pan" ; '
                                     f'Fixture {g_str} Stomp Attribute "Tilt"'
                                 )
+                            # Couper tout effet de couleur actif sur les lyres / sous-fixtures
+                            for ct in stomp_col_targets:
+                                stomp_lines.append(f'Fixture {ct} Stomp PresetType "Color"')
+
                             s.sendall(("\r\n".join(stomp_lines) + "\r\n").encode("utf-8"))
                             stomped_gids.update(current_gids)
                             last_stomp_t = now_t
+
+                            # Si de nouvelles lyres viennent d'être prises en charge, appliquer la couleur de leur focus
+                            if new_stomp:
+                                if self._is_focus_active(1):
+                                    self._send_focus_color_to_ma2(1)
+                                if self._is_focus_active(2):
+                                    self._send_focus_color_to_ma2(2)
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur envoi Stomp: {e}")
                             break
@@ -3019,6 +3103,15 @@ class Dashboard:
         # mais envoyé à GrandMA2 uniquement pour les focus points actifs (Manual F1 / UWB live ou Manual F2)
         fp1_live = self.test_mode.get() or self.connected
         fp2_live = self.test_mode_2.get()
+
+        # Dès qu'un focus passe à l'état actif (connexion UWB ou clic Manual), appliquer sa couleur
+        if fp1_live and not getattr(self, '_prev_fp1_live', False):
+            self._send_focus_color_to_ma2(1)
+        self._prev_fp1_live = fp1_live
+
+        if fp2_live and not getattr(self, '_prev_fp2_live', False):
+            self._send_focus_color_to_ma2(2)
+        self._prev_fp2_live = fp2_live
         new_targets = {}
         for j, fx in enumerate(self.fixtures):
             try:
