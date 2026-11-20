@@ -1988,12 +1988,8 @@ class Dashboard:
     def _toggle_focus(self, fp):
         if fp == 1:
             self.focus1_active = not self.focus1_active
-            if not self.focus1_active and not self.focus2_active:
-                self.focus2_active = True
         else:
             self.focus2_active = not self.focus2_active
-            if not self.focus1_active and not self.focus2_active:
-                self.focus1_active = True
 
         self._update_focus_buttons()
         self._draw()
@@ -2835,15 +2831,6 @@ class Dashboard:
                         direct_cmds = list(self.ma2_cmd_queue)
                         self.ma2_cmd_queue.clear()
 
-                    # Commandes directes (couleurs, etc.)
-                    if direct_cmds:
-                        for d_cmd in direct_cmds:
-                            try:
-                                s.sendall(d_cmd.encode("utf-8"))
-                            except Exception as e:
-                                self._log(f"[MA2] ✗ Erreur envoi commande directe: {e}")
-                                break
-
                     if resend_manual:
                         manual_sent_gids.clear()
 
@@ -2864,12 +2851,13 @@ class Dashboard:
                     removed_gids = stomped_gids - current_gids
                     if removed_gids:
                         try:
-                            rem_lines = []
+                            rem_lines = ["ClearSelection"]
                             for g in sorted(removed_gids):
                                 rem_lines.append(f'Off Fixture {g}')
                                 col_t = known_col_targets.get(g)
                                 if col_t and col_t != str(g):
                                     rem_lines.append(f'Off Fixture {col_t}')
+                            rem_lines.append("ClearSelection")
                             rel_cmd = "\r\n".join(rem_lines) + "\r\n"
                             s.sendall(rel_cmd.encode("utf-8"))
                             stomped_gids -= removed_gids
@@ -2883,6 +2871,13 @@ class Dashboard:
                             break
                         
                     if not targets:
+                        if direct_cmds:
+                            for d_cmd in direct_cmds:
+                                try:
+                                    s.sendall(d_cmd.encode("utf-8"))
+                                except Exception as e:
+                                    self._log(f"[MA2] ✗ Erreur envoi commande directe: {e}")
+                                    break
                         continue
 
                     # Stomp des effets Pan/Tilt et Couleur en cours sur les lyres contrôlées + Freeze On
@@ -2920,13 +2915,6 @@ class Dashboard:
                             s.sendall(("\r\n".join(stomp_lines) + "\r\n").encode("utf-8"))
                             stomped_gids.update(current_gids)
                             last_stomp_t = now_t
-
-                            # Si de nouvelles lyres viennent d'être prises en charge, appliquer la couleur de leur focus
-                            if new_stomp:
-                                if self._is_focus_active(1):
-                                    self._send_focus_color_to_ma2(1)
-                                if self._is_focus_active(2):
-                                    self._send_focus_color_to_ma2(2)
                         except Exception as e:
                             self._log(f"[MA2] ✗ Erreur envoi Stomp: {e}")
                             break
@@ -2952,6 +2940,35 @@ class Dashboard:
                                     self._log(f"[MA2] ✗ Erreur envoi Cmd Manual: {e}")
                                     break
                             manual_sent_gids.update(new_manual)
+
+                    # Garantir que la couleur du Focus est appliquée APRÈS manual_cmd uniquement pour le focus nouvellement activé
+                    if new_stomp:
+                        new_fp1 = any(
+                            self.group_toggles.get(val[2] if len(val) >= 3 else 1, False)
+                            and not self.group_toggles_2.get(val[2] if len(val) >= 3 else 1, False)
+                            for gid, val in targets if gid in new_stomp
+                        )
+                        new_fp2 = any(
+                            self.group_toggles_2.get(val[2] if len(val) >= 3 else 1, False)
+                            for gid, val in targets if gid in new_stomp
+                        )
+                        if new_fp1 and self._is_focus_active(1):
+                            self._send_focus_color_to_ma2(1)
+                        if new_fp2 and self._is_focus_active(2):
+                            self._send_focus_color_to_ma2(2)
+                        with self.ma2_lock:
+                            if self.ma2_cmd_queue:
+                                direct_cmds.extend(self.ma2_cmd_queue)
+                                self.ma2_cmd_queue.clear()
+
+                    # Commandes directes (couleurs, etc.) exécutées après l'initialisation manual_cmd
+                    if direct_cmds:
+                        for d_cmd in direct_cmds:
+                            try:
+                                s.sendall(d_cmd.encode("utf-8"))
+                            except Exception as e:
+                                self._log(f"[MA2] ✗ Erreur envoi commande directe: {e}")
+                                break
                         
                     # Build MA2 command (une ligne par groupe pour ne pas dépasser la limite Telnet MA2)
                     # Correct syntax to avoid "Error: Fixture X": Fixture X Attribute "Pan" At Y ; Fixture X Attribute "Tilt" At Z
@@ -3240,13 +3257,10 @@ class Dashboard:
         fp1_live = self.test_mode.get() or self.connected
         fp2_live = self.test_mode_2.get()
 
-        # Dès qu'un focus passe à l'état actif (connexion UWB ou clic Manual), appliquer sa couleur
-        if fp1_live and not getattr(self, '_prev_fp1_live', False):
+        # Dès que le suivi UWB démarre (hors clic Manual déjà géré dans _toggle_manual), appliquer la couleur de F1
+        if fp1_live and not getattr(self, '_prev_fp1_live', False) and not self.test_mode.get():
             self._send_focus_color_to_ma2(1)
         self._prev_fp1_live = fp1_live
-
-        if fp2_live and not getattr(self, '_prev_fp2_live', False):
-            self._send_focus_color_to_ma2(2)
         self._prev_fp2_live = fp2_live
         new_targets = {}
         for j, fx in enumerate(self.fixtures):
