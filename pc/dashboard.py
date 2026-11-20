@@ -1749,7 +1749,10 @@ class Dashboard:
             except:
                 pass
             grp = fx.get("group", 1)
-            in_fp = self.group_toggles.get(grp, False) if fp == 1 else self.group_toggles_2.get(grp, False)
+            if fp == 1:
+                in_fp = self.group_toggles.get(grp, False) and not self.group_toggles_2.get(grp, False)
+            else:
+                in_fp = self.group_toggles_2.get(grp, False)
             if in_fp:
                 try:
                     gid = int(self.fx_ma2_entries[j].get())
@@ -1888,12 +1891,13 @@ class Dashboard:
         else:
             cmd_preset = f'Preset "{preset_ref}"'
 
-        cmd_lines = ["Freeze On"]
+        cmd_lines = ["Freeze On", "ClearSelection"]
         for t in color_targets:
-            # Stomp de tout effet de couleur actif sur cette fixture/sous-fixture pour que le dashboard prenne la priorité absolue
-            cmd_lines.append(f'Fixture {t} Stomp PresetType "Color"')
-            # Appel direct du preset MA2 universel (gère aussi bien les roues physiques que les washes multi-instances)
-            cmd_lines.append(f'Fixture {t} At {cmd_preset}')
+            cmd_lines.append(f'Fixture {t}')
+        # Stomp de tout effet de couleur actif + appel du Preset uniquement sur la sélection de ce Focus
+        cmd_lines.append('Stomp PresetType "Color"')
+        cmd_lines.append(f'At {cmd_preset}')
+        cmd_lines.append("ClearSelection")
 
         cmd = "\r\n".join(cmd_lines) + "\r\n"
         self._send_ma2_direct(cmd)
@@ -2723,7 +2727,7 @@ class Dashboard:
                 formatted_parts.append(f"Fixture {p}")
             else:
                 formatted_parts.append(p)
-        return " ; ".join(formatted_parts)
+        return "ClearSelection ; " + " ; ClearSelection ; ".join(formatted_parts) + " ; ClearSelection"
 
     def _toggle_manual(self, fp=1):
         if fp == 1:
@@ -2911,6 +2915,7 @@ class Dashboard:
                             # Couper tout effet de couleur actif sur les lyres / sous-fixtures
                             for ct in stomp_col_targets:
                                 stomp_lines.append(f'Fixture {ct} Stomp PresetType "Color"')
+                            stomp_lines.append("ClearSelection")
 
                             s.sendall(("\r\n".join(stomp_lines) + "\r\n").encode("utf-8"))
                             stomped_gids.update(current_gids)
@@ -2940,7 +2945,8 @@ class Dashboard:
                                         custom_lines.append(f_cmd)
                             if custom_lines:
                                 try:
-                                    s.sendall(("\r\n".join(custom_lines) + "\r\n").encode("utf-8"))
+                                    full_custom = "ClearSelection\r\n" + "\r\n".join(custom_lines) + "\r\nClearSelection\r\n"
+                                    s.sendall(full_custom.encode("utf-8"))
                                     self._log(f"[MA2] ✓ Cmd Manual envoyée ({len(custom_lines)} lyre(s))")
                                 except Exception as e:
                                     self._log(f"[MA2] ✗ Erreur envoi Cmd Manual: {e}")
