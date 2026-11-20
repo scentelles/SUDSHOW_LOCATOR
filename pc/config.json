@@ -822,5 +822,15 @@
     "focus_colors": {
         "1": "#33FF33",
         "2": "#3366FF"
+    },
+    "color_presets": {
+        "Blanc": "4.1",
+        "Rouge": "4.2",
+        "Vert": "4.3",
+        "Bleu": "4.4",
+        "Jaune": "4.5",
+        "Cyan": "4.6",
+        "Magenta": "4.7",
+        "Orange": "4.8"
     }
 }

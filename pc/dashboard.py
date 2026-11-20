@@ -194,6 +194,17 @@ class Dashboard:
                         {"label": f"P{i+1}", "x": def_x, "y": def_y, "z": def_z, "empty": True}
                     )
         self.focus_current_color = self.cfg.get("focus_colors", {"1": "#FFFFFF", "2": "#FFFFFF"})
+        self.default_color_presets = {
+            "Blanc": "4.1",
+            "Rouge": "4.2",
+            "Vert": "4.3",
+            "Bleu": "4.4",
+            "Jaune": "4.5",
+            "Cyan": "4.6",
+            "Magenta": "4.7",
+            "Orange": "4.8"
+        }
+        self.color_presets = {**self.default_color_presets, **self.cfg.get("color_presets", {})}
         self.preset_save_mode = False
 
         # Battery monitoring
@@ -325,6 +336,7 @@ class Dashboard:
 
         data["focus_presets"] = self.focus_presets
         data["focus_colors"] = self.focus_current_color
+        data["color_presets"] = self.color_presets
 
         return data
 
@@ -486,9 +498,13 @@ class Dashboard:
                             font=("Segoe UI", 10, "bold")
                         )
 
-        # Couleurs Focus 1 et 2
+        # Couleurs Focus 1 et 2 & Presets Couleur MA2
         raw_colors = data.get("focus_colors", {"1": "#FFFFFF", "2": "#FFFFFF"})
         self.focus_current_color = copy.deepcopy(raw_colors)
+        raw_presets = data.get("color_presets", {})
+        self.color_presets = {**self.default_color_presets, **raw_presets}
+        if hasattr(self, 'color_swatch_btns'):
+            self._update_color_swatch_labels()
         if hasattr(self, 'color_swatch_boxes'):
             for fp in (1, 2):
                 cur_hex = self.focus_current_color.get(str(fp), "#FFFFFF").upper()
@@ -1453,6 +1469,10 @@ class Dashboard:
         col_hdr_f1.pack(fill="x", pady=(10, 4))
         tk.Label(col_hdr_f1, text="🎨 COULEURS FOCUS 1", font=("Segoe UI", 10, "bold"),
                  bg=C["canvas_bg"], fg=C["tag"]).pack(side="left")
+        tk.Button(col_hdr_f1, text="⚙️ Presets MA2", font=("Segoe UI", 8),
+                  bg=C["border"], fg=C["dim"], activebackground=C["accent"], activeforeground="#000",
+                  bd=0, padx=6, pady=1, cursor="hand2",
+                  command=self._open_color_presets_dialog).pack(side="right")
 
         grid_col1 = tk.Frame(card_f1, bg=C["canvas_bg"])
         grid_col1.pack(fill="x", pady=2)
@@ -1470,11 +1490,13 @@ class Dashboard:
                 box = tk.Frame(grid_col1, bg=hl, padx=3, pady=3, cursor="hand2")
                 box.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
                 box.bind("<Button-1>", lambda e, name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(1, name, hx, rgb))
+                box.bind("<Button-3>", lambda e: self._open_color_presets_dialog())
 
                 swatch = tk.Button(box, text="", bg=c_hex, activebackground=c_hex,
                                    bd=0, relief="flat", highlightthickness=0,
                                    height=2, pady=10, cursor="hand2",
                                    command=lambda name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(1, name, hx, rgb))
+                swatch.bind("<Button-3>", lambda e: self._open_color_presets_dialog())
                 swatch.pack(fill="both", expand=True)
 
                 self.color_swatch_boxes[1].append(box)
@@ -1518,6 +1540,10 @@ class Dashboard:
         col_hdr_f2.pack(fill="x", pady=(10, 4))
         tk.Label(col_hdr_f2, text="🎨 COULEURS FOCUS 2", font=("Segoe UI", 10, "bold"),
                  bg=C["canvas_bg"], fg=C["tag2"]).pack(side="left")
+        tk.Button(col_hdr_f2, text="⚙️ Presets MA2", font=("Segoe UI", 8),
+                  bg=C["border"], fg=C["dim"], activebackground=C["accent"], activeforeground="#000",
+                  bd=0, padx=6, pady=1, cursor="hand2",
+                  command=self._open_color_presets_dialog).pack(side="right")
 
         grid_col2 = tk.Frame(card_f2, bg=C["canvas_bg"])
         grid_col2.pack(fill="x", pady=2)
@@ -1535,15 +1561,19 @@ class Dashboard:
                 box = tk.Frame(grid_col2, bg=hl, padx=3, pady=3, cursor="hand2")
                 box.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
                 box.bind("<Button-1>", lambda e, name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(2, name, hx, rgb))
+                box.bind("<Button-3>", lambda e: self._open_color_presets_dialog())
 
                 swatch = tk.Button(box, text="", bg=c_hex, activebackground=c_hex,
                                    bd=0, relief="flat", highlightthickness=0,
                                    height=2, pady=10, cursor="hand2",
                                    command=lambda name=c_name, hx=c_hex, rgb=c_rgb: self._apply_focus_color(2, name, hx, rgb))
+                swatch.bind("<Button-3>", lambda e: self._open_color_presets_dialog())
                 swatch.pack(fill="both", expand=True)
 
                 self.color_swatch_boxes[2].append(box)
                 self.color_swatch_btns[2].append(swatch)
+
+        self._update_color_swatch_labels()
 
     def _toggle_left_panel(self):
         if str(self.left_panel) in [str(p) for p in self.main_panes.panes()]:
@@ -1730,11 +1760,111 @@ class Dashboard:
                     color_targets.append(target)
         return color_targets
 
+    def _update_color_swatch_labels(self):
+        """Met à jour le texte affiché sur chaque swatch avec son numéro de Preset MA2."""
+        if not hasattr(self, 'color_swatch_btns'):
+            return
+        for fp in (1, 2):
+            if fp not in self.color_swatch_btns:
+                continue
+            for idx, btn in enumerate(self.color_swatch_btns[fp]):
+                if idx >= len(self.COLOR_SWATCHES):
+                    continue
+                c_name, c_hex, _ = self.COLOR_SWATCHES[idx]
+                preset_val = str(self.color_presets.get(c_name, f"4.{idx+1}")).strip()
+                txt_col = "#000000" if c_hex.upper() in ["#FFFFFF", "#FFFF33", "#33FFFF", "#33FF33", "#FF8800"] else "#FFFFFF"
+                btn.config(text=preset_val, fg=txt_col, font=("Segoe UI", 9, "bold"))
+
+    def _open_color_presets_dialog(self):
+        """Ouvre la boîte de dialogue de configuration des Presets Couleur GrandMA2."""
+        top = tk.Toplevel(self.root)
+        top.title("Configuration Presets Couleur GrandMA2")
+        top.configure(bg=C["bg"])
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.grab_set()
+
+        # Centrage
+        top.update_idletasks()
+        w, h = 420, 480
+        x = max(0, self.root.winfo_x() + (self.root.winfo_width() - w) // 2)
+        y = max(0, self.root.winfo_y() + (self.root.winfo_height() - h) // 2)
+        top.geometry(f"{w}x{h}+{x}+{y}")
+
+        hdr = tk.Frame(top, bg=C["panel"], padx=14, pady=10)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="🎨 Presets Couleur GrandMA2 (Piscine 4)",
+                 font=("Segoe UI", 11, "bold"), bg=C["panel"], fg=C["accent"]).pack(anchor="w")
+        tk.Label(hdr, text="Associez chaque couleur à un Preset de votre console (ex: 4.1, 4.2).\nFonctionne sur toutes les machines (roues de couleurs et LEDs RGB).",
+                 font=("Segoe UI", 8), bg=C["panel"], fg=C["dim"], justify="left").pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(top, bg=C["bg"], padx=16, pady=12)
+        body.pack(fill="both", expand=True)
+
+        entries = {}
+        for idx, (c_name, c_hex, _) in enumerate(self.COLOR_SWATCHES):
+            row = tk.Frame(body, bg=C["bg"])
+            row.pack(fill="x", pady=3)
+
+            # Pastille couleur
+            p_box = tk.Frame(row, bg="#ffffff" if c_hex.upper() == "#FFFFFF" else C["border"], padx=1, pady=1)
+            p_box.pack(side="left", padx=(0, 8))
+            tk.Frame(p_box, bg=c_hex, width=20, height=20).pack()
+
+            # Nom couleur
+            tk.Label(row, text=c_name, font=("Segoe UI", 9, "bold"), bg=C["bg"], fg=C["text"], width=9, anchor="w").pack(side="left")
+
+            # Label At Preset
+            tk.Label(row, text="At Preset", font=("Segoe UI", 8), bg=C["bg"], fg=C["dim"]).pack(side="left", padx=(4, 6))
+
+            # Entry
+            cur_p = str(self.color_presets.get(c_name, f"4.{idx+1}")).strip()
+            ent = tk.Entry(row, font=("Consolas", 10, "bold"), bg="#1e1e2e", fg=C["accent"],
+                           insertbackground="#ffffff", width=12, justify="center")
+            ent.insert(0, cur_p)
+            ent.pack(side="right")
+            entries[c_name] = ent
+
+        def _reset_defaults():
+            for name, ent in entries.items():
+                def_val = self.default_color_presets.get(name, "4.1")
+                ent.delete(0, tk.END)
+                ent.insert(0, def_val)
+
+        def _save():
+            for name, ent in entries.items():
+                val = ent.get().strip()
+                if val:
+                    self.color_presets[name] = val
+            self._update_color_swatch_labels()
+            self._save_config()
+            self._log(f"[CONFIG] ✓ Presets Couleur MA2 mis à jour")
+            if self._is_focus_active(1):
+                self._send_focus_color_to_ma2(1)
+            if self._is_focus_active(2):
+                self._send_focus_color_to_ma2(2)
+            top.destroy()
+
+        footer = tk.Frame(top, bg=C["panel"], padx=14, pady=10)
+        footer.pack(fill="x", side="bottom")
+
+        tk.Button(footer, text="Défauts (4.1 -> 4.8)", font=("Segoe UI", 8),
+                  bg=C["border"], fg=C["dim"], activebackground=C["border"], activeforeground="#fff",
+                  bd=0, padx=8, pady=4, cursor="hand2", command=_reset_defaults).pack(side="left")
+
+        tk.Button(footer, text="Annuler", font=("Segoe UI", 9),
+                  bg=C["border"], fg=C["dim"], activebackground=C["border"], activeforeground="#fff",
+                  bd=0, padx=12, pady=4, cursor="hand2", command=top.destroy).pack(side="right", padx=(6, 0))
+
+        tk.Button(footer, text="✓ Enregistrer", font=("Segoe UI", 9, "bold"),
+                  bg=C["ok"], fg="#000", activebackground="#88ff88", activeforeground="#000",
+                  bd=0, padx=14, pady=4, cursor="hand2", command=_save).pack(side="right")
+
     def _send_focus_color_to_ma2(self, fp):
         """
         Envoie la couleur configurée du Focus fp vers GrandMA2 avec priorité absolue :
         Freeze On + Stomp PresetType Color sur chaque cible pour stopper les effets MA2,
-        puis assignation des attributs RGBW.
+        puis assignation du Preset Couleur GrandMA2 correspondant (ex: At Preset 4.1).
         """
         if not self._is_focus_active(fp):
             return
@@ -1745,32 +1875,29 @@ class Dashboard:
 
         s_fp = str(fp)
         hex_code = self.focus_current_color.get(s_fp, "#FFFFFF")
-        name, _, rgb = self._get_swatch_by_hex(hex_code)
+        name, _, _ = self._get_swatch_by_hex(hex_code)
         g_str = " + ".join(color_targets)
-        r, g_val, b = rgb
+        preset_ref = str(self.color_presets.get(name, "4.1")).strip()
+
+        # Formatage propre de la commande Preset (gère "4.1", "Preset 4.1", "1", etc.)
+        if preset_ref.lower().startswith("preset "):
+            cmd_preset = preset_ref
+        elif "." in preset_ref or preset_ref.isdigit():
+            p_val = preset_ref if "." in preset_ref else f"4.{preset_ref}"
+            cmd_preset = f"Preset {p_val}"
+        else:
+            cmd_preset = f'Preset "{preset_ref}"'
 
         cmd_lines = ["Freeze On"]
         for t in color_targets:
             # Stomp de tout effet de couleur actif sur cette fixture/sous-fixture pour que le dashboard prenne la priorité absolue
             cmd_lines.append(f'Fixture {t} Stomp PresetType "Color"')
-            if name == "Blanc":
-                cmd_lines.extend([
-                    f'Fixture {t} Attribute "ColorRGB1" At 100',
-                    f'Fixture {t} Attribute "ColorRGB2" At 100',
-                    f'Fixture {t} Attribute "ColorRGB3" At 100',
-                    f'Fixture {t} Attribute "ColorRGB5" At 100',
-                    f'Fixture {t} PresetType "Color" At Default',
-                ])
-            else:
-                cmd_lines.extend([
-                    f'Fixture {t} Attribute "ColorRGB1" At {r}',
-                    f'Fixture {t} Attribute "ColorRGB2" At {g_val}',
-                    f'Fixture {t} Attribute "ColorRGB3" At {b}',
-                    f'Fixture {t} Attribute "ColorRGB5" At 0',
-                ])
+            # Appel direct du preset MA2 universel (gère aussi bien les roues physiques que les washes multi-instances)
+            cmd_lines.append(f'Fixture {t} At {cmd_preset}')
+
         cmd = "\r\n".join(cmd_lines) + "\r\n"
         self._send_ma2_direct(cmd)
-        self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name} (Priorité/Stomp OK)")
+        self._log(f"[MA2] ✓ Focus {fp} ({g_str}) Couleur -> {name} (At {cmd_preset})")
 
     def _apply_focus_color(self, fp, name, hex_code, rgb):
         s_fp = str(fp)
